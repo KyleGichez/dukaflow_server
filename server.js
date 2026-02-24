@@ -9,7 +9,7 @@ connectDB();
 const app = express();
 
 // Middleware
-app.use(cors({origin:""}));
+app.use(cors({origin:"https://dukaflow.netlify.app"}));
 app.use(express.json());
 
 // Routes
