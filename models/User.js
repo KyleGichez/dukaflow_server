@@ -7,6 +7,15 @@ const userSchema = new mongoose.Schema({
   Phone: { type: Number, unique: true, required: true },
   Password: { type: String, required: true }, // This will store the hashed password
   City: { type: String, required: true },
+  role: {
+    type: String,
+    enum: ["admin", "staff"],
+    default: "staff"
+  },
+  ownerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
+  }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

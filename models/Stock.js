@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const stockSchema = mongoose.Schema(
+const stockSchema = new mongoose.Schema(
   {
     product: {
       type: mongoose.Schema.Types.ObjectId,
@@ -15,6 +15,10 @@ const stockSchema = mongoose.Schema(
     totalStockAfter: { type: Number },
     units: { type: String, required: true },
     price: { type: Number, required: true },
+    ownerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    }
   },
   { timestamps: true }
 );

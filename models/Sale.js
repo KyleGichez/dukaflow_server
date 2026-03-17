@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const saleSchema = mongoose.Schema(
+const saleSchema = new mongoose.Schema(
   {
     productId: { 
       type: mongoose.Schema.Types.ObjectId, 
@@ -13,6 +13,14 @@ const saleSchema = mongoose.Schema(
     totalPrice : {type: Number, required: true},
     units: {type: String},
     paymentMethod: { type: String, required: true },
+    soldBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    ownerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    }
   },
   { timestamps: true }
 );
