@@ -18,8 +18,6 @@ app.use(
     credentials: true
   })
 );
-// 2. Explicitly handle the "Preflight" check
-app.options("*", cors());
 
 app.use(express.json());
 
