@@ -2,7 +2,7 @@ const Sale = require("../models/Sale");
 const Product = require("../models/Product");
 const mongoose = require("mongoose");
 
-const getDateFilter = (range) => {
+function getDateFilter(range) {
   const now = new Date();
   let startDate = new Date();
 
@@ -10,19 +10,19 @@ const getDateFilter = (range) => {
     case "today":
       startDate.setHours(0, 0, 0, 0);
       break;
-    case "this-week": // Matches frontend value
+    case "this-week":
       startDate.setDate(now.getDate() - 7);
       break;
-    case "this-month": // Matches frontend value
+    case "this-month":
       startDate.setMonth(now.getMonth() - 1);
       break;
     case "all-time":
-      return new Date(0); // Epoch start
+      return new Date(0);
     default:
       startDate.setHours(0, 0, 0, 0);
   }
-  return new Date(startDate);
-};
+  return startDate;
+}
 
 // Create sale and update stock
 exports.createSale = async (req, res) => {
@@ -114,8 +114,13 @@ exports.deleteSale = async (req, res) => {
 exports.getSalesSummary = async (req, res) => {
   try {
     const ownerId = req.user.ownerId;
-    let startDate = getDateFilter(req.query.range);
-    if (!(startDate instanceof Date)) startDate = new Date(startDate);
+    
+    // Validate OwnerId early
+    if (!mongoose.Types.ObjectId.isValid(ownerId)) {
+       return res.status(400).json({ message: "Invalid Owner ID" });
+    }
+
+    const startDate = getDateFilter(req.query.range);
 
     const salesStats = await Sale.aggregate([
       { 
@@ -158,7 +163,9 @@ exports.getSalesSummary = async (req, res) => {
       }
     ]);
 
+    // Safely extract stats
     const stats = salesStats[0]?.totals[0] || { totalRevenue: 0, totalItemsSold: 0, totalTransactions: 0 };
+    
     const paymentBreakdown = {};
     salesStats[0]?.breakdown?.forEach(item => {
       if (item._id) paymentBreakdown[item._id] = item.amount;
@@ -171,8 +178,9 @@ exports.getSalesSummary = async (req, res) => {
       totalStockValue: inventoryStats[0]?.totalStockValue || 0,
       paymentBreakdown
     });
+
   } catch (error) {
-    console.error("SUMMARY ERROR:", error);
+    console.error("DETAILED SUMMARY ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
