@@ -1,5 +1,28 @@
 const Sale = require("../models/Sale");
 const Product = require("../models/Product");
+const mongoose = require("mongoose");
+
+const getDateFilter = (range) => {
+  const now = new Date();
+  let startDate = new Date();
+
+  switch (range) {
+    case "today":
+      startDate.setHours(0, 0, 0, 0);
+      break;
+    case "this-week": // Matches frontend value
+      startDate.setDate(now.getDate() - 7);
+      break;
+    case "this-month": // Matches frontend value
+      startDate.setMonth(now.getMonth() - 1);
+      break;
+    case "all-time":
+      return new Date(0); // Epoch start
+    default:
+      startDate.setHours(0, 0, 0, 0);
+  }
+  return new Date(startDate);
+};
 
 // Create sale and update stock
 exports.createSale = async (req, res) => {
@@ -46,9 +69,11 @@ exports.createSale = async (req, res) => {
 exports.getSales = async (req, res) => {
   try {
     const ownerId = req.user.ownerId;
-    const startDate = getDateFilter(req.query.range);
+    let startDate = getDateFilter(req.query.range);
     
-    // Filter by date AND ownerId
+    // Ensure startDate is a Date object for MongoDB
+    if (!(startDate instanceof Date)) startDate = new Date(startDate);
+
     const sales = await Sale.find({ 
         ownerId, 
         date: { $gte: startDate } 
@@ -58,6 +83,7 @@ exports.getSales = async (req, res) => {
       
     res.json(sales);
   } catch (error) {
+    console.error("GET SALES ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -88,13 +114,13 @@ exports.deleteSale = async (req, res) => {
 exports.getSalesSummary = async (req, res) => {
   try {
     const ownerId = req.user.ownerId;
-    const startDate = getDateFilter(req.query.range);
+    let startDate = getDateFilter(req.query.range);
+    if (!(startDate instanceof Date)) startDate = new Date(startDate);
 
-    // 1. Sales Stats Aggregation (Scoped to ownerId)
     const salesStats = await Sale.aggregate([
       { 
         $match: { 
-          ownerId: ownerId, // CRITICAL: Filter by workspace first
+          ownerId: new mongoose.Types.ObjectId(ownerId), 
           date: { $gte: startDate } 
         } 
       }, 
@@ -122,9 +148,8 @@ exports.getSalesSummary = async (req, res) => {
       }
     ]);
 
-    // 2. Inventory stats (Scoped to ownerId)
     const inventoryStats = await Product.aggregate([
-      { $match: { ownerId: ownerId } }, // CRITICAL: Filter by workspace
+      { $match: { ownerId: new mongoose.Types.ObjectId(ownerId) } }, 
       { 
         $group: { 
           _id: null, 
@@ -135,22 +160,19 @@ exports.getSalesSummary = async (req, res) => {
 
     const stats = salesStats[0]?.totals[0] || { totalRevenue: 0, totalItemsSold: 0, totalTransactions: 0 };
     const paymentBreakdown = {};
-    if (salesStats[0]?.breakdown) {
-      salesStats[0].breakdown.forEach(item => {
-        if (item._id) paymentBreakdown[item._id] = item.amount;
-      });
-    }
+    salesStats[0]?.breakdown?.forEach(item => {
+      if (item._id) paymentBreakdown[item._id] = item.amount;
+    });
 
     res.json({
       totalRevenue: stats.totalRevenue || 0,
       totalItemsSold: stats.totalItemsSold || 0,
       totalTransactions: stats.totalTransactions || 0,
       totalStockValue: inventoryStats[0]?.totalStockValue || 0,
-      paymentBreakdown: paymentBreakdown
+      paymentBreakdown
     });
-
   } catch (error) {
-    console.error("DETAILED SUMMARY ERROR:", error);
+    console.error("SUMMARY ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
