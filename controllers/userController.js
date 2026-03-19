@@ -1,5 +1,4 @@
 const User = require("../models/User");
-const bcrypt = require("bcryptjs");
 
 exports.createStaff = async (req, res) => {
     try {
@@ -9,19 +8,16 @@ exports.createStaff = async (req, res) => {
       const existingUser = await User.findOne({ email });
       if (existingUser) return res.status(400).json({ message: "Email already in use" });
   
-      // 2. Hash the staff's temporary password
-      const hashedPassword = await bcrypt.hash(password, 10);
-  
       // 3. Create the staff member tied to the current Admin (req.user._id)
       const newStaff = new User({
         FName: FName,
         LName: "Staff",        // Satisfies required: true
         Email: email,          // Schema expects 'Email'
         Phone: phone,          // Schema expects 'Phone'
-        Password: hashedPassword, // Schema expects 'Password'
+        Password: password, // Schema expects 'Password'
         City: "Default",       // Satisfies required: true
         role: role, 
-        ownerId: req.user._id 
+        ownerId: req.user.id 
       });
   
       await newStaff.save();
@@ -42,26 +38,28 @@ try {
 };
 
 exports.deleteStaff = async (req, res) => {
-try {
-    const staffId = req.params.id;
-    const adminId = req.user._id;
-
-    // Find the staff member
-    const staffMember = await User.findById(staffId);
-
-    if (!staffMember) {
-    return res.status(404).json({ message: "Staff member not found" });
+    try {
+      const staffId = req.params.id;
+      const adminId = req.user.id;
+  
+      const staffMember = await User.findById(staffId);
+  
+      if (!staffMember) {
+        return res.status(404).json({ message: "Staff member not found" });
+      }
+  
+      // ✅ ADD THIS SAFETY CHECK
+      // If there is no ownerId, or it doesn't match, block the delete
+      if (!staffMember.ownerId || staffMember.ownerId.toString() !== adminId.toString()) {
+        return res.status(403).json({ 
+          message: "Unauthorized: This account cannot be deleted by you." 
+        });
+      }
+  
+      await User.findByIdAndDelete(staffId);
+      res.json({ message: "Staff member removed successfully" });
+    } catch (error) {
+      console.error("Delete Error:", error.message);
+      res.status(500).json({ error: error.message });
     }
-
-    // SECURITY: Ensure this staff member actually belongs to this Admin
-    // We compare the staff's ownerId with the current logged-in Admin's ID
-    if (staffMember.ownerId.toString() !== adminId.toString()) {
-    return res.status(403).json({ message: "Unauthorized: You do not own this staff account" });
-    }
-
-    await User.findByIdAndDelete(staffId);
-    res.json({ message: "Staff member removed successfully" });
-} catch (error) {
-    res.status(500).json({ error: error.message });
-}
-};
+  };
