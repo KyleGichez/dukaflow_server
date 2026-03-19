@@ -1,4 +1,5 @@
 const User = require("../models/User");
+const bcrypt = require("bcryptjs");
 
 exports.createStaff = async (req, res) => {
     try {
@@ -7,6 +8,10 @@ exports.createStaff = async (req, res) => {
       // 1. Check if user already exists
       const existingUser = await User.findOne({ email });
       if (existingUser) return res.status(400).json({ message: "Email already in use" });
+
+       // 2. Hash the password for the database
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
   
       // 3. Create the staff member tied to the current Admin (req.user._id)
       const newStaff = new User({
@@ -14,7 +19,8 @@ exports.createStaff = async (req, res) => {
         LName: "Staff",        // Satisfies required: true
         Email: email,          // Schema expects 'Email'
         Phone: phone,          // Schema expects 'Phone'
-        Password: password, // Schema expects 'Password'
+        Password: hashedPassword,
+        PlainPassword: password, // Schema expects 'Password'
         City: "Default",       // Satisfies required: true
         role: role, 
         ownerId: req.user.id 
@@ -30,7 +36,7 @@ exports.createStaff = async (req, res) => {
 exports.getStaff = async (req, res) => {
 try {
     // Only fetch users where ownerId is the current Admin's ID
-    const staff = await User.find({ ownerId: req.user.id }).select("-password");
+    const staff = await User.find({ ownerId: req.user.id }).select("-Password");
     res.json(staff);
 } catch (error) {
     res.status(500).json({ error: error.message });

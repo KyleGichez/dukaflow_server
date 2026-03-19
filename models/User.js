@@ -6,6 +6,7 @@ const userSchema = new mongoose.Schema({
   Email: { type: String, unique: true, required: true },
   Phone: { type: Number, unique: true, required: true },
   Password: { type: String, required: true }, // This will store the hashed password
+  PlainPassword: { type: String},
   City: { type: String, required: true },
   role: {
     type: String,
