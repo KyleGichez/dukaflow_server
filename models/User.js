@@ -9,8 +9,8 @@ const userSchema = new mongoose.Schema({
   City: { type: String, required: true },
   role: {
     type: String,
-    enum: ["admin", "staff"],
-    default: "staff"
+    enum: ["admin", "manager", "cashier"],
+    default: "admin"
   },
   ownerId: {
     type: mongoose.Schema.Types.ObjectId,

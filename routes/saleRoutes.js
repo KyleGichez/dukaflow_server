@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const auth = require("../middleware/authMiddleware");
+const authorize = require("../middleware/roleMiddleware");
 const {
   createSale,
   getSales,
@@ -10,9 +11,9 @@ const {
 
 router.use(auth);
 
-router.post("/", createSale);
-router.get("/", getSales);
-router.get('/summary', getSalesSummary);
-router.delete("/:id", deleteSale);
+router.post("/", auth, authorize(["admin", "manager", "cashier"]), createSale);
+router.get("/", auth, authorize(["admin", "manager", "cashier"]), getSales);
+router.get('/summary', auth, authorize(["admin", "manager", "cashier"]), getSalesSummary);
+router.delete("/:id", auth, authorize(["admin", "manager", "cashier"]), deleteSale);
 
 module.exports = router;

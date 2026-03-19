@@ -26,6 +26,7 @@ app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/sales", require("./routes/saleRoutes"));
 app.use("/api/stock", require("./routes/stockRoutes"));
 app.use('/api/auth', require('./routes/authRoutes'));
+app.use("/api/staff", require('./routes/staffRoutes'));
 
 const PORT = process.env.PORT || 5000;
 

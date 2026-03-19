@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const auth = require("../middleware/authMiddleware");
+const authorize = require("../middleware/roleMiddleware");
 const {
   createStock,
   getStockItems,
@@ -10,9 +11,9 @@ const {
 
 router.use(auth);
 
-router.post("/", createStock);
-router.get("/", getStockItems);
-router.put("/:id", updateStock);  
-router.delete("/:id",deleteStock);
+router.post("/", auth, authorize(["admin", "manager"]), createStock);
+router.get("/",  auth, authorize(["admin", "manager", "cashier"]), getStockItems);
+router.put("/:id", auth, authorize(["admin", "manager"]), updateStock);  
+router.delete("/:id", auth, authorize(["admin", "manager"]), deleteStock);
 
 module.exports = router;
