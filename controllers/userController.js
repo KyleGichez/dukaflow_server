@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 
 exports.createStaff = async (req, res) => {
     try {
-      const { FName, email, password, role } = req.body;
+      const { FName, email, phone, password, role } = req.body;
       
       // 1. Check if user already exists
       const existingUser = await User.findOne({ email });
@@ -15,7 +15,10 @@ exports.createStaff = async (req, res) => {
       // 3. Create the staff member tied to the current Admin (req.user._id)
       const newStaff = new User({
         FName,
+        LName:"",
+        City: "Default",
         email,
+        phone,
         password: hashedPassword,
         role, // manager or cashier
         ownerId: req.user._id 
