@@ -30,7 +30,7 @@ exports.createStaff = async (req, res) => {
 exports.getStaff = async (req, res) => {
 try {
     // Only fetch users where ownerId is the current Admin's ID
-    const staff = await User.find({ ownerId: req.user._id }).select("-password");
+    const staff = await User.find({ ownerId: req.user.id }).select("-password");
     res.json(staff);
 } catch (error) {
     res.status(500).json({ error: error.message });
