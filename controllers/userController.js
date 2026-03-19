@@ -14,13 +14,13 @@ exports.createStaff = async (req, res) => {
   
       // 3. Create the staff member tied to the current Admin (req.user._id)
       const newStaff = new User({
-        FName,
-        LName:"",
-        City: "Default",
-        email,
-        phone,
-        password: hashedPassword,
-        role, // manager or cashier
+        FName: FName,
+        LName: "Staff",        // Satisfies required: true
+        Email: email,          // Schema expects 'Email'
+        Phone: phone,          // Schema expects 'Phone'
+        Password: hashedPassword, // Schema expects 'Password'
+        City: "Default",       // Satisfies required: true
+        role: role, 
         ownerId: req.user._id 
       });
   
