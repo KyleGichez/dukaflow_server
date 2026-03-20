@@ -21,7 +21,7 @@ const getAccessToken = async () => {
 // 1. Trigger the STK Push
 exports.stkPush = async (req, res) => {
   const { phone, amount, plan } = req.body;
-  const adminId = req.user.id; // From your auth middleware
+  const adminId = req.user.id || req.user._id; // From your auth middleware
 
   try {
     const token = await getAccessToken();
@@ -56,6 +56,7 @@ exports.stkPush = async (req, res) => {
     res.status(200).json({ message: "STK Push initiated successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
+    console.error("STK PUSH ERROR DETAILS:", error.response?.data || error.message);
   }
 };
 
