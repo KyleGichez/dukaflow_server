@@ -27,7 +27,7 @@ exports.stkPush = async (req, res) => {
     const token = await getAccessToken();
     const timestamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
     const password = Buffer.from(
-      process.env.MPESA_SHORTCODE + process.env.MPESA_PASS_KEY + timestamp
+      process.env.MPESA_SHORTCODE + process.env.MPESA_PASSKEY + timestamp
     ).toString("base64");
 
     const response = await axios.post(
