@@ -16,6 +16,25 @@ const userSchema = new mongoose.Schema({
   ownerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User"
+  },
+  subscription: {
+    plan: { 
+      type: String, 
+      enum: ["none", "monthly", "yearly"], 
+      default: "none" 
+    },
+    startDate: { type: Date },
+    endDate: { type: Date },
+    status: { 
+      type: String, 
+      enum: ["trial", "active", "expired"], 
+      default: "trial" 
+    },
+    lastTransactionId: { type: String } // To store M-Pesa CheckoutRequestID
+  },
+  trialEndDate: {
+    type: Date,
+    default: () => new Date(+new Date() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
   }
 }, { timestamps: true });
 
