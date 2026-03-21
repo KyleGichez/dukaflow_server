@@ -12,4 +12,4 @@ router.post("/", createStaff);
 router.get("/", getStaff);
 router.delete("/:id", deleteStaff);
 
-module.exports = router;
+module.exports = router; 
