@@ -1,36 +1,42 @@
-const User = require("../models/User"); // Adjust path to your User model
+const User = require("../models/User"); // Ensure path is correct
 
 const checkSubscription = async (req, res, next) => {
   try {
-    // 1. Fetch the full user from DB using the ID from the token (req.user.id)
+    // 1. Fetch fresh user data from DB using the ID from your auth token
     const user = await User.findById(req.user.id);
 
-    if (!user || !user.subscription) {
-      return res.status(403).json({ message: "Subscription record not found." });
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
     }
 
     const now = new Date();
-    const subEndDate = new Date(user.subscription.endDate);
-    const trialEndDate = new Date(user.subscription.trialEndDate);
+    
+    // DEBUG: Look at these in your Render/Terminal logs
+    console.log(`Checking access for: ${user.Email}`);
+    console.log(`Trial Ends: ${user.trialEndDate}`);
+    console.log(`Current Time: ${now}`);
 
-    // 2. Check for active paid subscription
-    if (user.subscription.status === "active" && subEndDate > now) {
+    // 2. Check if the 7-day trial is still valid (Now outside subscription)
+    if (user.trialEndDate && new Date(user.trialEndDate) > now) {
       return next();
     }
 
-    // 3. Check if the trial is still valid
-    if (trialEndDate > now) {
-      return next();
+    // 3. Check for active paid subscription (Inside subscription object)
+    if (user.subscription && user.subscription.status === "active") {
+      const subEndDate = new Date(user.subscription.endDate);
+      if (subEndDate > now) {
+        return next();
+      }
     }
 
     // 4. If both fail, block access
     return res.status(403).json({ 
-      message: "Subscription expired. Please pay Ksh 1,500 (Monthly) or Ksh 18,000 (Yearly) to continue." 
+      message: "Subscription or trial expired. Please pay to continue." 
     });
 
   } catch (error) {
-    console.error("Subscription Check Error:", error);
-    return res.status(500).json({ message: "Internal server error during subscription check." });
+    console.error("Middleware Error:", error);
+    return res.status(500).json({ message: "Server error checking subscription." });
   }
 };
 
