@@ -14,7 +14,7 @@ const checkSubscription = (req, res, next) => {
   
     // 3. Otherwise, block access
     return res.status(403).json({ 
-      message: "Subscription expired. Please pay Ksh 1,000 (Monthly) or Ksh 12,000 (Yearly) to continue." 
+      message: "Subscription expired. Please pay Ksh 1,500 (Monthly) or Ksh 18,000 (Yearly) to continue." 
     });
   };
   
