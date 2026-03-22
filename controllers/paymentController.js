@@ -77,10 +77,10 @@ exports.mpesaCallback = async (req, res) => {
       
       // Update subscription details
       user.subscription.status = "active";
-      user.subscription.plan = amountPaid >= 12000 ? "yearly" : "monthly";
+      user.subscription.plan = amountPaid >= 30000 ? "yearly" : "monthly";
       user.subscription.startDate = new Date();
       user.subscription.endDate = new Date(
-        Date.now() + (amountPaid >= 12000 ? 365 : 30) * 24 * 60 * 60 * 1000
+        Date.now() + (amountPaid >= 30000 ? 365 : 30) * 24 * 60 * 60 * 1000
       );
 
       await user.save();
