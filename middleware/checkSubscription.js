@@ -31,7 +31,7 @@ const checkSubscription = async (req, res, next) => {
 
     // 4. If both fail, block access
     return res.status(403).json({ 
-      message: "Subscription or trial expired. Please pay to continue." 
+      message: "Subscription expired. Please renew your subscription to continue." 
     });
 
   } catch (error) {
