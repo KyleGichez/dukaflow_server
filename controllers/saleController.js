@@ -19,7 +19,7 @@ function getDateFilter(range) {
     case "all-time":
       return new Date(0);
     default:
-      startDate.setHours(0, 0, 0, 0);
+      return new Date(0);
   }
   return startDate;
 }
