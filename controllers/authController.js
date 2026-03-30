@@ -69,6 +69,8 @@ exports.login = async (req, res) => {
       user: {
         id: user._id,
         FName: user.FName,
+        LName: user.LName,
+        Email: user.Email,
         Phone: user.Phone,
         ownerId: user.ownerId,
         role: user.role
@@ -76,5 +78,30 @@ exports.login = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+exports.updateSettings = async (req, res) => {
+  try {
+    const { FName, LName, Email, currentPassword, newPassword, theme } = req.body;
+    const user = await User.findById(req.user.id);
+
+    if (FName) user.FName = FName;
+    if (LName) user.LName = LName;
+    if (Email) user.Email = Email;
+    
+    // If the user wants to change password
+    if (currentPassword && newPassword) {
+      const isMatch = await bcrypt.compare(currentPassword, user.Password);
+      if (!isMatch) return res.status(400).json({ message: "Current password incorrect" });
+      
+      const salt = await bcrypt.genSalt(10);
+      user.Password = await bcrypt.hash(newPassword, salt);
+    }
+
+    await user.save();
+    res.status(200).json({ message: "Settings updated!", user: { ...user._doc, Password: null } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
