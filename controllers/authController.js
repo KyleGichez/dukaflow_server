@@ -53,14 +53,26 @@ exports.login = async (req, res) => {
 
     // 3. Create Token
     const token = jwt.sign(
-      { id: user._id, ownerId: user.ownerId, role: user.role, subscription: user.subscription, trialEndDate: user.trialEndDate },
+      {
+        id: user._id,
+        ownerId: user.ownerId,
+        role: user.role,
+        subscription: user.subscription,
+        trialEndDate: user.trialEndDate,
+      },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
     res.status(200).json({
       token,
-      user: { id: user._id, FName: user.FName, Phone: user.Phone, ownerId: user.ownerId },
+      user: {
+        id: user._id,
+        FName: user.FName,
+        Phone: user.Phone,
+        ownerId: user.ownerId,
+        role: user.role
+      },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
