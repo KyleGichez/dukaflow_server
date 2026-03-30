@@ -8,6 +8,6 @@ router.post('/signup', signup);
 // POST http://localhost:5000/api/auth/login
 router.post('/login', login);
 
-router.put("/settings", protect, updateSettings);
+router.put("/settings", updateSettings);
 
 module.exports = router;
