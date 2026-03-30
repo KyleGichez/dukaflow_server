@@ -83,14 +83,13 @@ exports.login = async (req, res) => {
 
 exports.updateSettings = async (req, res) => {
   try {
-    const { FName, LName, Email, currentPassword, newPassword, theme } = req.body;
-    const user = await User.findById(req.user.id);
-
-    if (FName) user.FName = FName;
-    if (LName) user.LName = LName;
-    if (Email) user.Email = Email;
+    const { FName, LName, Email, currentPassword, newPassword, themePreference } = req.body;
     
-    // If the user wants to change password
+    // 1. Find user by ID (from the 'protect' middleware)
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // 2. Handle Password Change (Optional)
     if (currentPassword && newPassword) {
       const isMatch = await bcrypt.compare(currentPassword, user.Password);
       if (!isMatch) return res.status(400).json({ message: "Current password incorrect" });
@@ -99,9 +98,28 @@ exports.updateSettings = async (req, res) => {
       user.Password = await bcrypt.hash(newPassword, salt);
     }
 
+    // 3. Update other fields
+    if (FName) user.FName = FName;
+    if (LName) user.LName = LName;
+    if (Email) user.Email = Email;
+    if (themePreference) user.themePreference = themePreference;
+
     await user.save();
-    res.status(200).json({ message: "Settings updated!", user: { ...user._doc, Password: null } });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+    // 4. Return updated user (without password)
+    const updatedUser = {
+      _id: user._id,
+      FName: user.FName,
+      LName: user.LName,
+      Email: user.Email,
+      role: user.role,
+      themePreference: user.themePreference,
+      trialEndDate: user.trialEndDate,
+      subscription: user.subscription
+    };
+
+    res.status(200).json({ message: "Settings updated successfully", user: updatedUser });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
