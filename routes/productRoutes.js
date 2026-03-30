@@ -14,7 +14,7 @@ router.use(auth);
 
 router.post("/", auth, checkSub, authorize(["admin", "manager"]), createProduct);
 router.get("/", auth, authorize(["admin", "manager", "cashier"]), getProducts);
-router.put("/:id", auth, authorize(["admin", "manager"]), updateProduct);
-router.delete("/:id", auth, authorize(["admin", "manager"]), deleteProduct);
+router.put("/:id", auth, checkSub, authorize(["admin", "manager"]), updateProduct);
+router.delete("/:id", auth, checkSub, authorize(["admin", "manager"]), deleteProduct);
 
 module.exports = router;

@@ -14,7 +14,7 @@ router.use(auth);
 
 router.post("/", auth, checkSub, authorize(["admin", "manager"]), createStock);
 router.get("/",  auth, authorize(["admin", "manager", "cashier"]), getStockItems);
-router.put("/:id", auth, authorize(["admin", "manager"]), updateStock);  
-router.delete("/:id", auth, authorize(["admin", "manager"]), deleteStock);
+router.put("/:id", auth, checkSub, authorize(["admin", "manager"]), updateStock);  
+router.delete("/:id", auth, checkSub, authorize(["admin", "manager"]), deleteStock);
 
 module.exports = router;

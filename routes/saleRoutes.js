@@ -15,6 +15,6 @@ router.use(auth);
 router.post("/", auth, checkSub, authorize(["admin", "manager", "cashier"]), createSale);
 router.get("/", auth, authorize(["admin", "manager", "cashier"]), getSales);
 router.get('/summary', auth, authorize(["admin", "manager", "cashier"]), getSalesSummary);
-router.delete("/:id", auth, authorize(["admin", "manager", "cashier"]), deleteSale);
+router.delete("/:id", auth, checkSub, authorize(["admin", "manager", "cashier"]), deleteSale);
 
 module.exports = router;
