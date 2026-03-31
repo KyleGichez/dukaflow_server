@@ -86,7 +86,7 @@ exports.updateSettings = async (req, res) => {
     const { FName, LName, Email, currentPassword, newPassword, themePreference } = req.body;
     
     // 1. Find user by ID (from the 'protect' middleware)
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     // 2. Handle Password Change (Optional)
