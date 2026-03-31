@@ -24,6 +24,7 @@ exports.signup = async (req, res) => {
       City: City,
       Password: hashedPassword,
       role: "admin",
+      trialEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     });
 
     newUser.ownerId = newUser._id;
@@ -73,7 +74,9 @@ exports.login = async (req, res) => {
         Email: user.Email,
         Phone: user.Phone,
         ownerId: user.ownerId,
-        role: user.role
+        role: user.role,
+        trialEndDate: user.trialEndDate,
+        subscription: user.subscription,
       },
     });
   } catch (err) {
