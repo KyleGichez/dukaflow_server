@@ -122,7 +122,9 @@ exports.updateSettings = async (req, res) => {
     if (FName) user.FName = FName;
     if (LName) user.LName = LName;
     if (Email) user.Email = Email;
-    if (themePreference) user.themePreference = themePreference;
+    if (req.body.themePreference) {
+      user.themePreference = req.body.themePreference;
+    }
 
     await user.save();
 
