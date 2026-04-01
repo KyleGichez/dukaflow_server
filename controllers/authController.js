@@ -24,7 +24,7 @@ exports.signup = async (req, res) => {
       City: City,
       Password: hashedPassword,
       role: "admin",
-      trialEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      trialEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     });
 
     newUser.ownerId = newUser._id;
@@ -52,6 +52,15 @@ exports.login = async (req, res) => {
     if (!isMatch)
       return res.status(400).json({ message: "Invalid credentials" });
 
+    // 🔥 3. Get ADMIN (owner) data
+    let owner;
+
+    if (user.role === "admin") {
+      owner = user; // admin uses own data
+    } else {
+      owner = await User.findById(user.ownerId); // get admin
+    }
+
     // 3. Create Token
     const token = jwt.sign(
       {
@@ -62,7 +71,7 @@ exports.login = async (req, res) => {
         trialEndDate: user.trialEndDate,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "30m" }
     );
 
     res.status(200).json({
@@ -75,8 +84,8 @@ exports.login = async (req, res) => {
         Phone: user.Phone,
         ownerId: user.ownerId,
         role: user.role,
-        trialEndDate: user.trialEndDate,
-        subscription: user.subscription,
+        trialEndDate: owner.trialEndDate,
+        subscription: owner.subscription,
       },
     });
   } catch (err) {
@@ -86,8 +95,15 @@ exports.login = async (req, res) => {
 
 exports.updateSettings = async (req, res) => {
   try {
-    const { FName, LName, Email, currentPassword, newPassword, themePreference } = req.body;
-    
+    const {
+      FName,
+      LName,
+      Email,
+      currentPassword,
+      newPassword,
+      themePreference,
+    } = req.body;
+
     // 1. Find user by ID (from the 'protect' middleware)
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -95,8 +111,9 @@ exports.updateSettings = async (req, res) => {
     // 2. Handle Password Change (Optional)
     if (currentPassword && newPassword) {
       const isMatch = await bcrypt.compare(currentPassword, user.Password);
-      if (!isMatch) return res.status(400).json({ message: "Current password incorrect" });
-      
+      if (!isMatch)
+        return res.status(400).json({ message: "Current password incorrect" });
+
       const salt = await bcrypt.genSalt(10);
       user.Password = await bcrypt.hash(newPassword, salt);
     }
@@ -118,10 +135,12 @@ exports.updateSettings = async (req, res) => {
       role: user.role,
       themePreference: user.themePreference,
       trialEndDate: user.trialEndDate,
-      subscription: user.subscription
+      subscription: user.subscription,
     };
 
-    res.status(200).json({ message: "Settings updated successfully", user: updatedUser });
+    res
+      .status(200)
+      .json({ message: "Settings updated successfully", user: updatedUser });
   } catch (error) {
     res.status(500).json({ message: error.message });
     console.log(error);
