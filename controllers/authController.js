@@ -71,7 +71,7 @@ exports.login = async (req, res) => {
         trialEndDate: user.trialEndDate,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "30m" }
+      { expiresIn: "1d" }
     );
 
     res.status(200).json({
