@@ -174,3 +174,57 @@ exports.getSuperAdminDashboard = async (req, res) => {
     res.status(500).json({ message: "Error fetching dashboard stats" });
   }
 };
+
+exports.updateSettings = async (req, res) => {
+  try {
+    const {
+      fname,
+      lname,
+      email,
+      currentPassword,
+      newPassword,
+      themePreference,
+    } = req.body;
+
+    // 1. Find user by ID (from the 'protect' middleware)
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // 2. Handle Password Change (Optional)
+    if (currentPassword && newPassword) {
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch)
+        return res.status(400).json({ message: "Current password incorrect" });
+
+      const salt = await bcrypt.genSalt(10);
+      user.password = await bcrypt.hash(newPassword, salt);
+    }
+
+    // 3. Update other fields
+    if (fname) user.fname = fname;
+    if (lname) user.lname = lname;
+    if (email) user.email = email;
+    if (req.body.themePreference) {
+      user.themePreference = req.body.themePreference;
+    }
+
+    await user.save();
+
+    // 4. Return updated user (without password)
+    const updatedUser = {
+      _id: user._id,
+      fname: user.fname,
+      lname: user.lname,
+      email: user.email,
+      role: user.role,
+      themePreference: user.themePreference,
+    };
+
+    res
+      .status(200)
+      .json({ message: "Settings updated successfully", user: updatedUser });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+    console.log(error);
+  }
+};
