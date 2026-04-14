@@ -1,43 +1,67 @@
-const User = require("../models/User");
+const Subscription = require("../models/Subscription");
 
 const checkSubscription = async (req, res, next) => {
   try {
-    // 1. Fetch the OWNER'S data, not the current user's data
-    // req.user.ownerId should be available from your decoded JWT token
-    const owner = await User.findById(req.user.ownerId);
-
-    if (!owner) {
-      return res.status(404).json({ message: "Shop owner account not found." });
-    }
-
-    const now = new Date();
-    
-    // DEBUG: Logs will now show the Admin's status even if a staff member logs in
-    console.log(`Checking Shop Access for: ${owner.Email} (Staff: ${req.user.id})`);
-    console.log(`Owner Trial Ends: ${owner.trialEndDate}`);
-    console.log(`Current Time: ${now}`);
-
-    // 2. Check if the Admin's 7-day trial is still valid
-    if (owner.trialEndDate && new Date(owner.trialEndDate) > now) {
+    // 🔥 Superadmin bypass
+    if (req.user.Role === "superadmin") {
       return next();
     }
 
-    // 3. Check if the Admin has an active paid subscription
-    if (owner.subscription && owner.subscription.status === "active") {
-      const subEndDate = new Date(owner.subscription.endDate);
-      if (subEndDate > now) {
-        return next();
-      }
+    const businessId = req.user.businessId;
+
+    if (!businessId) {
+      return res.status(400).json({
+        message: "User is not linked to any business.",
+      });
     }
 
-    // 4. If the Admin's account is expired, everyone (Admin & Staff) is blocked
-    return res.status(403).json({ 
-      message: "Subscription expired. Please renew your subscription to continue." 
-    });
+    // 🔥 Fetch subscription using businessId
+    const subscription = await Subscription.findOne({ businessId });
 
+    if (!subscription) {
+      return res.status(403).json({
+        message: "No subscription found for this business.",
+      });
+    }
+
+    const now = new Date();
+
+    console.log(`Checking subscription for business: ${businessId}`);
+    console.log(`Plan: ${subscription.plan}`);
+    console.log(`Status: ${subscription.status}`);
+    
+    // ✅ Check trial status
+    if (
+      subscription.status === "trial" &&
+      subscription.trialEndDate &&
+      new Date(subscription.trialEndDate) <= now
+      ) {
+        return res.status(403).json({
+          message: "Trial expired. Please add a subscription plan to continue.",
+        });
+      }
+
+    // Check paid subscription status
+    if (
+      subscription.status === "active" &&
+      subscription.endDate &&
+      new Date(subscription.endDate) <= now
+    ) {
+      return res.status(403).json({
+        message:
+          "Subscription expired. Please renew your subscription to continue.",
+      });
+    }
+
+    // Fallback (no valid access)
+    return res.status(403).json({
+      message: "Access denied. No active subscription.",
+    });
   } catch (error) {
-    console.error("Error:", error);
-    return res.status(500).json({ message: "Server error checking shop status." });
+    console.error("Subscription check error:", error);
+    return res.status(500).json({
+      message: "Server error checking subscription.",
+    });
   }
 };
 

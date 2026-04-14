@@ -1,14 +1,35 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { signup, login, updateSettings } = require('../controllers/authController');
-const auth = require('../middleware/authMiddleware');
 
-// POST http://localhost:5000/api/auth/signup
-router.post('/signup', signup);
+const {
+  login,
+  updateSettings,
+  createBusinessWithAdmin,
+  getSuperAdminDashboard,
+} = require("../controllers/authController");
 
-// POST http://localhost:5000/api/auth/login
-router.post('/login', login);
+const protect = require("../middleware/authMiddleware");
+const authorize = require("../middleware/roleMiddleware");
 
-router.put("/settings", auth, updateSettings);
+// ✅ Login
+router.post("/login", login);
+
+router.put("/settings", protect, updateSettings);
+
+// Superadmin creates new business + admin
+router.post(
+  "/superadmin/create-business",
+  protect,
+  authorize("superadmin"),
+  createBusinessWithAdmin
+);
+
+// Superadmin gets their dashboard data
+router.get(
+    "/superadmin/dashboard",
+    protect,
+    authorize("superadmin"),
+    getSuperAdminDashboard
+  );
 
 module.exports = router;
