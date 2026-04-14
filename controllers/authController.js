@@ -107,12 +107,10 @@ exports.getSuperAdminDashboard = async (req, res) => {
     // 🔥 USERS
     const totalUsers = await User.countDocuments();
     const activeUsers = await User.countDocuments({ isActive: true });
-    const inactiveUsers = await User.countDocuments({ isActive: false });
 
     // 🔥 BUSINESSES
     const totalBusinesses = await Business.countDocuments();
-    const activeBusinesses = await User.countDocuments({ isActive: true });
-    const inactiveBusinesses = await User.countDocuments({ isActive: false });
+    const activeBusinesses = await Business.countDocuments({ isActive: true });
 
     // 🔥 SUBSCRIPTIONS
     const totalSubscriptions = await Subscription.countDocuments();
@@ -152,10 +150,10 @@ exports.getSuperAdminDashboard = async (req, res) => {
         users: {
           total: totalUsers,
           active: activeUsers,
-          inactive: inactiveUsers,
         },
         businesses: {
           total: totalBusinesses,
+          active: activeBusinesses,
         },
         subscriptions: {
           total: totalSubscriptions,
