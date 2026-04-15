@@ -6,7 +6,7 @@ const User = require("./models/User");
 const seedAdmin = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
-    const email = process.env.SUPERADMIN_EMAIL || "dukaflowsuperadmin@gmail.com";
+    const email = process.env.SUPERADMIN_EMAIL || "dukaflowadmin@gmail.com";
     
     // 1. Prevent duplicates
     const existingAdmin = await User.findOne({ email: email });
@@ -28,11 +28,11 @@ const seedAdmin = async () => {
       phone: "0793410951",
       password: hashedPassword,
       city: "Nakuru",
-      role: "superadmin", // 🔥 important
+      role: "superadmin",
       isActive: true,
     });
 
-    console.log("✅ Super admin created:", admin.fname, admin.lname, admin.email, admin.phone, admin.role);
+    console.log("✅ Super admin created:", admin.fname, admin.lname);
     process.exit();
 
   } catch (error) {

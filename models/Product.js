@@ -7,9 +7,10 @@ const productSchema = new mongoose.Schema(
     price: { type: Number, required: true },
     quantity: { type: Number, default: 0, required: true },
     units: { type: String, required: true},
-    ownerId: {
+    businessId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
+      ref: "Business",
+      required: true,
     }
   },
   { timestamps: true }

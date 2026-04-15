@@ -5,7 +5,7 @@ const Product = require("../models/Product");
 exports.createStock = async (req, res) => {
   try {
     const { date, category, name, quantityAdded, units, price } = req.body;
-    const ownerId = req.user.ownerId; // Extract from Auth Middleware
+    const businessId = req.user.businessId; // Extract from Auth Middleware
 
     // 1. Create the Stock Entry linked to the owner
     const stockItem = await Stock.create({
@@ -15,12 +15,12 @@ exports.createStock = async (req, res) => {
       quantityAdded: Number(quantityAdded),
       units,
       price: Number(price),
-      ownerId // Link to workspace
+      businessId // Link to workspace
     });
 
     // 2. Sync to Product Table within the same workspace
     await Product.findOneAndUpdate(
-      { name: name.trim(), ownerId }, // Search for name AND ownerId
+      { name: name.trim(), businessId }, // Search for name AND businessId
       {
         $inc: { quantity: Number(quantityAdded) },
         $set: { 
@@ -28,7 +28,7 @@ exports.createStock = async (req, res) => {
           units: units,
           price: Number(price) 
         },
-        $setOnInsert: { ownerId } // Ensure ownerId is set if product is newly created
+        $setOnInsert: { businessId } // Ensure ownerId is set if product is newly created
       },
       { upsert: true, new: true, runValidators: true }
     );
@@ -43,7 +43,7 @@ exports.createStock = async (req, res) => {
 // Get all stock items for the workspace
 exports.getStockItems = async (req, res) => {
   try {
-    const stockItems = await Stock.find({ ownerId: req.user.ownerId });
+    const stockItems = await Stock.find({ businessId: req.user.businessId });
     res.json(stockItems);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -53,12 +53,12 @@ exports.getStockItems = async (req, res) => {
 // Update stock
 exports.updateStock = async (req, res) => {
   try {
-    const ownerId = req.user.ownerId;
+    const businessId = req.user.businessId;
     const newQuantity = Number(req.body.quantityAdded);
     const newPrice = Number(req.body.price);
 
-    // 1. Fetch record ensuring it belongs to this owner
-    const oldStock = await Stock.findOne({ _id: req.params.id, ownerId });
+    // 1. Fetch record ensuring it belongs to this business
+    const oldStock = await Stock.findOne({ _id: req.params.id, businessId });
     if (!oldStock) return res.status(404).json({ message: "Stock not found in your workspace" });
 
     // 2. Calculate Difference
@@ -66,7 +66,7 @@ exports.updateStock = async (req, res) => {
 
     // 3. Update the Stock record
     const updatedStock = await Stock.findOneAndUpdate(
-      { _id: req.params.id, ownerId },
+      { _id: req.params.id, businessId },
       { 
         ...req.body, 
         quantityAdded: newQuantity, 
@@ -77,7 +77,7 @@ exports.updateStock = async (req, res) => {
 
     // 4. Update the Product Table within the same workspace
     await Product.findOneAndUpdate(
-      { name: oldStock.name, ownerId }, 
+      { name: oldStock.name, businessId }, 
       { 
         $inc: { quantity: quantityDifference },
         $set: { 
@@ -98,20 +98,20 @@ exports.updateStock = async (req, res) => {
 // Delete Stock
 exports.deleteStock = async (req, res) => {
   try {
-    const ownerId = req.user.ownerId;
+    const businessId = req.user.businessId;
 
     // 1. Find the stock within the workspace
-    const stockToDelete = await Stock.findOne({ _id: req.params.id, ownerId });
+    const stockToDelete = await Stock.findOne({ _id: req.params.id, businessId });
     if (!stockToDelete) return res.status(404).json({ message: "Stock not found" });
 
     // 2. Subtract quantity from Product within the same workspace
     await Product.findOneAndUpdate(
-      { name: stockToDelete.name, ownerId },
+      { name: stockToDelete.name, businessId },
       { $inc: { quantity: -stockToDelete.quantityAdded } }
     );
 
     // 3. Delete the stock record
-    await Stock.findOneAndDelete({ _id: req.params.id, ownerId });
+    await Stock.findOneAndDelete({ _id: req.params.id, businessId });
 
     res.json({ message: "Stock deleted and Product quantity updated" });
   } catch (error) {

@@ -28,10 +28,10 @@ function getDateFilter(range) {
 exports.createSale = async (req, res) => {
   try {
     const { productId, quantitySold, paymentMethod, date } = req.body;
-    const ownerId = req.user.ownerId; // Extract from Auth Middleware
+    const businessId = req.user.busisnessId; // Extract from Auth Middleware
 
     // 1. Find product ensuring it belongs to this workspace
-    const product = await Product.findOne({ _id: productId, ownerId });
+    const product = await Product.findOne({ _id: productId, businessId });
     if (!product) return res.status(404).json({ message: "Product not found in your workspace" });
 
     // 2. Check stock
@@ -50,7 +50,7 @@ exports.createSale = async (req, res) => {
       totalPrice,
       paymentMethod,
       date,
-      ownerId // Link to workspace
+      businessId // Link to workspace
     });
 
     await newSale.save();
@@ -68,14 +68,14 @@ exports.createSale = async (req, res) => {
 
 exports.getSales = async (req, res) => {
   try {
-    const ownerId = req.user.ownerId;
+    const businessId = req.user.businessId;
     let startDate = getDateFilter(req.query.range);
     
     // Ensure startDate is a Date object for MongoDB
     if (!(startDate instanceof Date)) startDate = new Date(startDate);
 
     const sales = await Sale.find({ 
-        ownerId, 
+        businessId, 
         date: { $gte: startDate } 
       })
       .populate("productId")
@@ -90,20 +90,20 @@ exports.getSales = async (req, res) => {
 
 exports.deleteSale = async (req, res) => {
   try {
-    const ownerId = req.user.ownerId;
+    const businessId = req.user.businessId;
 
     // 1. Verify ownership
-    const sale = await Sale.findOne({ _id: req.params.id, ownerId });
+    const sale = await Sale.findOne({ _id: req.params.id, businessId });
     if (!sale) return res.status(404).json({ message: "Sale not found" });
 
     // 2. Restore stock only to the owner's product
     await Product.findOneAndUpdate(
-      { _id: sale.productId, ownerId }, 
+      { _id: sale.productId, businessId }, 
       { $inc: { quantity: sale.quantitySold } }
     );
 
     // 3. Delete sale record
-    await Sale.findOneAndDelete({ _id: req.params.id, ownerId });
+    await Sale.findOneAndDelete({ _id: req.params.id, businessId });
 
     res.json({ message: "Sale deleted and stock restored" });
   } catch (error) {
@@ -113,10 +113,10 @@ exports.deleteSale = async (req, res) => {
 
 exports.getSalesSummary = async (req, res) => {
   try {
-    const ownerId = req.user.ownerId;
+    const businessId = req.user.businessId;
     
     // Validate OwnerId early
-    if (!mongoose.Types.ObjectId.isValid(ownerId)) {
+    if (!mongoose.Types.ObjectId.isValid(businessId)) {
        return res.status(400).json({ message: "Invalid Owner ID" });
     }
 
@@ -125,7 +125,7 @@ exports.getSalesSummary = async (req, res) => {
     const salesStats = await Sale.aggregate([
       { 
         $match: { 
-          ownerId: new mongoose.Types.ObjectId(ownerId), 
+          businessId: new mongoose.Types.ObjectId(businessId), 
           date: { $gte: startDate } 
         } 
       }, 
@@ -154,7 +154,7 @@ exports.getSalesSummary = async (req, res) => {
     ]);
 
     const inventoryStats = await Product.aggregate([
-      { $match: { ownerId: new mongoose.Types.ObjectId(ownerId) } }, 
+      { $match: { businessId: new mongoose.Types.ObjectId(businessId) } }, 
       { 
         $group: { 
           _id: null, 
