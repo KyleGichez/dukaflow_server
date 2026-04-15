@@ -1,4 +1,5 @@
 const User = require("../models/User");
+const Business = require("../models/Business");
 const bcrypt = require("bcryptjs");
 
 exports.createStaff = async (req, res) => {
@@ -169,19 +170,23 @@ exports.getBusinessUsers = async (req, res) => {
 // Update User (Universal for Admin and Superadmin)
 exports.updateUser = async (req, res) => {
   try {
-    const { businessName, ...userData } = req.body;
+    const { businessName, password, ...userData } = req.body;
 
-    // 1. Update the User details
+    // 1. Handle Password: If password is empty or blank, don't update it
+    if (password && password.trim() !== "") {
+      // If you use bcrypt hashing in your model, this will trigger it
+      userData.password = password; 
+    }
+
+    // 2. Update the User
     const user = await User.findByIdAndUpdate(req.params.id, userData, { new: true });
 
-    // 2. If a businessName was provided, update the linked Business document
+    // 3. Update the Business (Now 'Business' is defined!)
     if (user.businessId && businessName) {
       await Business.findByIdAndUpdate(user.businessId, { businessName });
     }
 
-    // 3. Return the updated user with the business info populated
     const updatedUser = await User.findById(user._id).populate("businessId");
-    
     res.json(updatedUser);
   } catch (error) {
     res.status(500).json({ message: error.message });
