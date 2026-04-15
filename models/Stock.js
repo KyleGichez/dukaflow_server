@@ -15,9 +15,10 @@ const stockSchema = new mongoose.Schema(
     totalStockAfter: { type: Number },
     units: { type: String, required: true },
     price: { type: Number, required: true },
-    ownerId: {
+    businessId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
+      ref: "Business",
+      required: true,
     }
   },
   { timestamps: true }

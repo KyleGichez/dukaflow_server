@@ -17,9 +17,10 @@ const saleSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"
     },
-    ownerId: {
+    businessId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
+      ref: "Business",
+      required: true,
     }
   },
   { timestamps: true }

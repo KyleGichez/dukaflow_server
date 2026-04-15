@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const businessSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
+    businessName: { type: String, required: true },
 
     ownerId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -18,6 +18,11 @@ const businessSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
+    createdAt: {
+      type: Date,
+      required: true,
+    }
   },
   { timestamps: true }
 );
