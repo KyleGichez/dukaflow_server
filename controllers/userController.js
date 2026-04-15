@@ -169,41 +169,20 @@ exports.getBusinessUsers = async (req, res) => {
 // Update User (Universal for Admin and Superadmin)
 exports.updateUser = async (req, res) => {
   try {
-    const { fname, lname, email, phone, businessName, role, status, city, password } = req.body;
-    const userId = req.params.id;
+    const { businessName, ...userData } = req.body;
 
-    const userToUpdate = await User.findById(userId);
-    if (!userToUpdate) return res.status(404).json({ message: "User not found" });
+    // 1. Update the User details
+    const user = await User.findByIdAndUpdate(req.params.id, userData, { new: true });
 
-    // 🛡️ Security Check: If not Superadmin, must belong to the same business
-    if (req.user.role !== 'superadmin' && 
-        userToUpdate.businessId.toString() !== req.user.businessId.toString()) {
-      return res.status(403).json({ message: "Unauthorized access to this user." });
+    // 2. If a businessName was provided, update the linked Business document
+    if (user.businessId && businessName) {
+      await Business.findByIdAndUpdate(user.businessId, { businessName });
     }
 
-    // Update fields
-    userToUpdate.fname = fname || userToUpdate.fname;
-    userToUpdate.lname = lname || userToUpdate.lname;
-    userToUpdate.email = email || userToUpdate.email;
-    userToUpdate.phone = phone || userToUpdate.phone;
-    userToUpdate.role = role || userToUpdate.role;
-    userToUpdate.status = status || userToUpdate.status;
-    userToUpdate.city = city || userToUpdate.city;
-    userToUpdate.businessName = businessName || userToUpdate.businessName;
-
-    // Handle password change if provided
-    if (password && password.trim() !== "") {
-      const salt = await bcrypt.genSalt(10);
-      userToUpdate.password = await bcrypt.hash(password, salt);
-    }
-
-    const updatedUser = await userToUpdate.save();
+    // 3. Return the updated user with the business info populated
+    const updatedUser = await User.findById(user._id).populate("businessId");
     
-    // Remove password from response
-    const responseData = updatedUser.toObject();
-    delete responseData.password;
-
-    res.json(responseData);
+    res.json(updatedUser);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
