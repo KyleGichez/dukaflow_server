@@ -144,7 +144,7 @@ exports.updateSettings = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const users = await User.find()
-      .populate("businessId", "name")
+      .populate("businessId", "businessName")
       .select("-password");
 
     res.json(users);
