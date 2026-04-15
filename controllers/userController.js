@@ -165,3 +165,72 @@ exports.getBusinessUsers = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// Update User (Universal for Admin and Superadmin)
+exports.updateUser = async (req, res) => {
+  try {
+    const { fname, lname, email, phone, businessName, role, status, city, password } = req.body;
+    const userId = req.params.id;
+
+    const userToUpdate = await User.findById(userId);
+    if (!userToUpdate) return res.status(404).json({ message: "User not found" });
+
+    // 🛡️ Security Check: If not Superadmin, must belong to the same business
+    if (req.user.role !== 'superadmin' && 
+        userToUpdate.businessId.toString() !== req.user.businessId.toString()) {
+      return res.status(403).json({ message: "Unauthorized access to this user." });
+    }
+
+    // Update fields
+    userToUpdate.fname = fname || userToUpdate.fname;
+    userToUpdate.lname = lname || userToUpdate.lname;
+    userToUpdate.email = email || userToUpdate.email;
+    userToUpdate.phone = phone || userToUpdate.phone;
+    userToUpdate.role = role || userToUpdate.role;
+    userToUpdate.status = status || userToUpdate.status;
+    userToUpdate.city = city || userToUpdate.city;
+    userToUpdate.businessName = businessName || userToUpdate.businessName;
+
+    // Handle password change if provided
+    if (password && password.trim() !== "") {
+      const salt = await bcrypt.genSalt(10);
+      userToUpdate.password = await bcrypt.hash(password, salt);
+    }
+
+    const updatedUser = await userToUpdate.save();
+    
+    // Remove password from response
+    const responseData = updatedUser.toObject();
+    delete responseData.password;
+
+    res.json(responseData);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Delete User (Universal)
+exports.deleteUser = async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const userToDelete = await User.findById(userId);
+    if (!userToDelete) return res.status(404).json({ message: "User not found" });
+
+    // 🛡️ Security Check
+    if (req.user.role !== 'superadmin' && 
+        userToDelete.businessId.toString() !== req.user.businessId.toString()) {
+      return res.status(403).json({ message: "Unauthorized: You cannot delete this user." });
+    }
+
+    // Prevent self-deletion
+    if (userToDelete._id.toString() === req.user.id) {
+      return res.status(400).json({ message: "You cannot delete your own account here." });
+    }
+
+    await User.findByIdAndDelete(userId);
+    res.json({ message: "User deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
