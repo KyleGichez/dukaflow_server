@@ -8,7 +8,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
     const activeUsers = await User.countDocuments({ isActive: true });
 
     const totalBusinesses = await Business.countDocuments();
-    const activeBusinesses = await User.countDocuments({ isActive: true });
+    const activeBusinesses = await Business.countDocuments({ isActive: true });
 
     const totalSubscriptions = await Subscription.countDocuments();
     const activeSubscriptions = await Subscription.countDocuments({ status: "active" });
