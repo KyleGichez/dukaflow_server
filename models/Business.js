@@ -7,22 +7,18 @@ const businessSchema = new mongoose.Schema(
     ownerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
     },
 
-    phone: { type: Number, unique: true, required: true },
-    email: { type: String, unique: true, required: true },
-    city: { type: String, required: true },
+    phone: { type: Number, unique: true, required: false },
+    email: { type: String, unique: true, required: false },
+    city: { type: String, required: false },
     
     isActive: {
       type: Boolean,
       default: true,
     },
-
-    createdAt: {
-      type: Date,
-      required: true,
-    }
+    createdAt: { type: Date, default: Date.now }
   },
   { timestamps: true }
 );

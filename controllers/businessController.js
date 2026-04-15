@@ -14,7 +14,7 @@ exports.createBusinessWithAdmin = async (req, res) => {
       return res.status(400).json({ message: "User with this email or phone already exists" });
     }
 
-    // 2. Create the Business first 
+    // 2. Create the Business first so we have the business._id ready
     const business = await Business.create({
       name: businessName,
       city: city, 
