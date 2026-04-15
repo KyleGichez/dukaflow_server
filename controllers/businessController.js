@@ -8,11 +8,20 @@ exports.createBusinessWithAdmin = async (req, res) => {
   try {
     const { fname, lname, email, phone, password, city, businessName } = req.body;
 
-    const existingUser = await User.findOne({ phone });
+    // 1. Check if user already exists BEFORE creating anything
+    const existingUser = await User.findOne({ $or: [{ phone }, { email }] });
     if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+      return res.status(400).json({ message: "User with this email or phone already exists" });
     }
 
+    // 2. Create the Business first 
+    const business = await Business.create({
+      name: businessName,
+      city: city, 
+      // Note: we can update ownerId after the user is created
+    });
+
+    // 3. Hash password and Create the Admin User
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const adminUser = await User.create({
@@ -23,15 +32,13 @@ exports.createBusinessWithAdmin = async (req, res) => {
       city,
       password: hashedPassword,
       role: "admin",
+      businessId: business._id, 
+      businessName: businessName,
     });
 
-    const business = await Business.create({
-      name: businessName,
-      ownerId: adminUser._id,
-    });
-
-    adminUser.businessId = business._id;
-    await adminUser.save();
+    // 4. Update Business with the ownerId and create Subscription
+    business.ownerId = adminUser._id;
+    await business.save();
 
     await Subscription.create({
       businessId: business._id,
@@ -40,9 +47,11 @@ exports.createBusinessWithAdmin = async (req, res) => {
       trialEndDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
-    res.status(201).json({ message: "Business & Admin created successfully" });
+    // 5. Return the created user to update the frontend state
+    res.status(201).json(adminUser);
 
   } catch (error) {
+    console.error("Creation Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
