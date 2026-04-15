@@ -10,8 +10,8 @@ const businessSchema = new mongoose.Schema(
       required: false,
     },
 
-    phone: { type: Number, unique: true, required: false },
-    email: { type: String, unique: true, required: false },
+    phone: { type: Number, unique: true, sparse: true, required: false },
+    email: { type: String, unique: true, sparse: true, required: false },
     city: { type: String, required: false },
     
     isActive: {

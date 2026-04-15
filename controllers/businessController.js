@@ -16,7 +16,7 @@ exports.createBusinessWithAdmin = async (req, res) => {
 
     // 2. Create the Business first so we have the business._id ready
     const business = await Business.create({
-      name: businessName,
+      businessName: businessName,
       city: city, 
       // Note: we can update ownerId after the user is created
     });
