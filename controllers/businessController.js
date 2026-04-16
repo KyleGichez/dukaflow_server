@@ -55,3 +55,22 @@ exports.createBusinessWithAdmin = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+exports.getMyBusinessProfile = async (req, res) => {
+  try {
+    // 1. Get the business linked to the logged-in user
+    const business = await Business.findById(req.user.businessId);
+    if (!business) return res.status(404).json({ message: "Business not found" });
+
+    // 2. Get the subscription for this business
+    const subscription = await Subscription.findOne({ businessId: business._id });
+
+    // 3. Send back a combined object
+    res.status(200).json({
+      ...business._doc,
+      subscription: subscription || null
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
