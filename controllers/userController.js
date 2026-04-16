@@ -154,7 +154,7 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-const getAllBusinesses = async (req, res) => {
+exports.getAllBusinesses = async (req, res) => {
   try {
     // Assuming 'ownerId' is a field in your Business model
     const businesses = await Business.find({})
