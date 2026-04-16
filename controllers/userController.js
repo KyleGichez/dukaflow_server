@@ -154,7 +154,7 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-const getAllBusinesses = async (req, res) => {
+exports.getAllBusinesses = async (req, res) => {
   try {
     // 1. Fetch all businesses from the database
     const businesses = await Business.find({}).sort({ createdAt: -1 });
