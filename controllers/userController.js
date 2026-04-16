@@ -154,34 +154,16 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-exports.getAllBusinesses = async (req, res) => {
+const getAllBusinesses = async (req, res) => {
   try {
-    // 1. Fetch all businesses from the database
-    const businesses = await Business.find({}).sort({ createdAt: -1 });
-
-    // 2. Map through businesses to attach user counts (optional but helpful for your UI)
-    const businessData = await Promise.all(
-      businesses.map(async (biz) => {
-        const userCount = await User.countDocuments({ businessId: biz._id });
-        
-        return {
-          _id: biz._id,
-          businessName: biz.businessName,
-          email: biz.email,
-          phone: biz.phone,
-          city: biz.city,
-          subscription: biz.subscription,
-          status: biz.status || "active",
-          createdAt: biz.createdAt,
-          totalUsers: userCount, // This populates your "Total Users" column
-        };
-      })
-    );
-
-    res.status(200).json(businessData);
+    // Assuming 'ownerId' is a field in your Business model
+    const businesses = await Business.find({})
+      .populate("ownerId", "fname lname") 
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json(businesses);
   } catch (error) {
-    console.error("Error fetching businesses:", error);
-    res.status(500).json({ message: "Server Error: Could not fetch businesses" });
+    res.status(500).json({ message: "Server Error" });
   }
 };
 
