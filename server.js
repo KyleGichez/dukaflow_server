@@ -30,7 +30,7 @@ app.use("/api/staff", require('./routes/staffRoutes'));
 app.use("/api/payments",require('./routes/paymentRoutes'));
 app.use("/api/admin/dashboard",require('./routes/dashboardRoutes'));
 app.use("/api/admin/business",require('./routes/businessRoutes'));
-app.use("/api/my-profile",require('./routes/businessRoutes'));
+app.use("/api/myprofile",require('./routes/businessRoutes'));
 app.use("/api/settings",require('./routes/usersRoutes'));
 app.use("/api/admin/users",require('./routes/usersRoutes'));
 
