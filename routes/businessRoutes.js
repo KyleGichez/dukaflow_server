@@ -11,6 +11,6 @@ const authorize = require("../middleware/roleMiddleware");
 
 router.get("/", protect, getMyBusinessProfile);
 router.post("/", protect, authorize("superadmin"), createBusinessWithAdmin);
-router.post("/", protect, authorize("superadmin"), createStaffUser);
+router.post("/staff", protect, authorize("superadmin"), createStaffUser);
 
 module.exports = router;
