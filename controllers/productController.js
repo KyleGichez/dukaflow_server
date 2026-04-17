@@ -50,7 +50,7 @@ exports.getProducts = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { name, category, price, quantity, units } = req.body;
-    const ownerId = req.user.ownerId;
+    const businessId = req.user.businessId;
     const productId = req.params.id;
 
     // 1. Find the product and ensure it belongs to this owner
