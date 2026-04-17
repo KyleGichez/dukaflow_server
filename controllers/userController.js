@@ -175,13 +175,26 @@ exports.getAllUsers = async (req, res) => {
 
 exports.getAllBusinesses = async (req, res) => {
   try {
-    // Assuming 'ownerId' is a field in your Business model
+    // 1. Fetch businesses and populate owner names
     const businesses = await Business.find({})
-      .populate("ownerId", "fname lname") 
-      .sort({ createdAt: -1 });
-    
-    res.status(200).json(businesses);
+      .populate("ownerId", "fname lname")
+      .sort({ createdAt: -1 })
+      .lean(); // Use .lean() to allow adding extra fields like 'totalUsers'
+
+    // 2. Attach the live count of users for each business
+    const businessesWithCounts = await Promise.all(
+      businesses.map(async (biz) => {
+        const userCount = await User.countDocuments({ businessId: biz._id });
+        return {
+          ...biz,
+          totalUsers: userCount, // This matches your frontend {biz.totalUsers}
+        };
+      })
+    );
+
+    res.status(200).json(businessesWithCounts);
   } catch (error) {
+    console.error("Error fetching businesses:", error);
     res.status(500).json({ message: "Server Error" });
   }
 };
@@ -224,33 +237,6 @@ exports.updateUser = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-// Delete User (Universal)
-// exports.deleteUser = async (req, res) => {
-//   try {
-//     const userId = req.params.id;
-
-//     const userToDelete = await User.findById(userId);
-//     if (!userToDelete) return res.status(404).json({ message: "User not found" });
-
-//     // 🛡️ Security Check
-//     if (req.user.role !== 'superadmin' && 
-//         userToDelete.businessId.toString() !== req.user.businessId.toString()) {
-//       return res.status(403).json({ message: "Unauthorized: You cannot delete this user." });
-//     }
-
-//     // Prevent self-deletion
-//     if (userToDelete._id.toString() === req.user.id) {
-//       return res.status(400).json({ message: "You cannot delete your own account here." });
-//     }
-
-//     await User.findByIdAndDelete(userId);
-//     res.json({ message: "User deleted successfully" });
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
-
 
 exports.deleteUserAndAssociatedData = async (req, res) => {
   try {
