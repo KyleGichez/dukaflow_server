@@ -141,6 +141,24 @@ exports.updateSettings = async (req, res) => {
   }
 };
 
+exports.createBusiness = async (req, res) => {
+  try {
+    const { businessName, email, phone, city, status } = req.body;
+    
+    const newBusiness = await Business.create({
+      businessName,
+      email,
+      phone,
+      city,
+      status
+    });
+
+    res.status(201).json(newBusiness);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // 👑 Superadmin → all users
 exports.getAllUsers = async (req, res) => {
   try {
