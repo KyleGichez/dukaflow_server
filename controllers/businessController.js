@@ -31,7 +31,7 @@ exports.createBusinessWithAdmin = async (req, res) => {
       phone,
       city,
       password: hashedPassword,
-      role: "admin",
+      role: "",
       businessId: business._id, 
       businessName: businessName,
     });
