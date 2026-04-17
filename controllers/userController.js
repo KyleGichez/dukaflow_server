@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Business = require("../models/Business");
+const Subscription = require("../models/Subscription");
 const bcrypt = require("bcryptjs");
 
 exports.createStaff = async (req, res) => {
@@ -250,7 +251,6 @@ exports.updateUser = async (req, res) => {
 //   }
 // };
 
-// controllers/userController.js (or businessController)
 
 exports.deleteUserAndAssociatedData = async (req, res) => {
   try {
@@ -272,8 +272,7 @@ exports.deleteUserAndAssociatedData = async (req, res) => {
       // Delete the Business itself
       await Business.findByIdAndDelete(businessId);
       
-      // Optional: Delete all staff members belonging to this business 
-      // so you don't have "orphaned" cashier accounts
+      // Delete all staff members belonging to this business 
       await User.deleteMany({ businessId: businessId });
     } else {
       // If no business (just a standalone user), just delete the user
