@@ -21,7 +21,7 @@ const getAccessToken = async () => {
 // 1. Trigger the STK Push
 exports.stkPush = async (req, res) => {
   const { phone, amount, plan } = req.body;
-  const businessId = req.business.id || req.business._id; // From your auth middleware
+  const businessId = req.user?.businessId;  // From your auth middleware
 
   try {
     const token = await getAccessToken();
