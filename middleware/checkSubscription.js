@@ -54,9 +54,9 @@ const checkSubscription = async (req, res, next) => {
     }
 
     // Fallback (no valid access)
-    return res.status(403).json({
-      message: "Access denied. No active subscription.",
-    });
+    // return res.status(403).json({
+    //   message: "Access denied. No active subscription.",
+    // });
   } catch (error) {
     console.error("Subscription check error:", error);
     return res.status(500).json({
