@@ -8,7 +8,7 @@ const {
   getBusinessUsers,
   getAllBusinesses,
   updateUser,
-  deleteUser,
+  deleteUserAndAssociatedData,
 } = require("../controllers/userController");
 const protect = require("../middleware/authMiddleware");
 
@@ -18,6 +18,6 @@ router.get("/businesses", protect, getAllBusinesses);
 router.get("/business", protect, getBusinessUsers);
 router.post("/", protect, createBusiness);
 router.put("/:id", protect, updateUser);
-router.delete("/:id", protect, deleteUser);
+router.delete("/:id", protect, deleteUserAndAssociatedData);
 
 module.exports = router;

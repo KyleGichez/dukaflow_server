@@ -225,27 +225,64 @@ exports.updateUser = async (req, res) => {
 };
 
 // Delete User (Universal)
-exports.deleteUser = async (req, res) => {
+// exports.deleteUser = async (req, res) => {
+//   try {
+//     const userId = req.params.id;
+
+//     const userToDelete = await User.findById(userId);
+//     if (!userToDelete) return res.status(404).json({ message: "User not found" });
+
+//     // 🛡️ Security Check
+//     if (req.user.role !== 'superadmin' && 
+//         userToDelete.businessId.toString() !== req.user.businessId.toString()) {
+//       return res.status(403).json({ message: "Unauthorized: You cannot delete this user." });
+//     }
+
+//     // Prevent self-deletion
+//     if (userToDelete._id.toString() === req.user.id) {
+//       return res.status(400).json({ message: "You cannot delete your own account here." });
+//     }
+
+//     await User.findByIdAndDelete(userId);
+//     res.json({ message: "User deleted successfully" });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
+// controllers/userController.js (or businessController)
+
+exports.deleteUserAndAssociatedData = async (req, res) => {
   try {
     const userId = req.params.id;
 
-    const userToDelete = await User.findById(userId);
-    if (!userToDelete) return res.status(404).json({ message: "User not found" });
-
-    // 🛡️ Security Check
-    if (req.user.role !== 'superadmin' && 
-        userToDelete.businessId.toString() !== req.user.businessId.toString()) {
-      return res.status(403).json({ message: "Unauthorized: You cannot delete this user." });
+    // 1. Find the user first to get their businessId
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
 
-    // Prevent self-deletion
-    if (userToDelete._id.toString() === req.user.id) {
-      return res.status(400).json({ message: "You cannot delete your own account here." });
+    const businessId = user.businessId;
+
+    // 2. If the user has a business, delete the business and its subscription
+    if (businessId) {
+      // Delete the Subscription associated with this business
+      await Subscription.deleteMany({ businessId: businessId });
+
+      // Delete the Business itself
+      await Business.findByIdAndDelete(businessId);
+      
+      // Optional: Delete all staff members belonging to this business 
+      // so you don't have "orphaned" cashier accounts
+      await User.deleteMany({ businessId: businessId });
+    } else {
+      // If no business (just a standalone user), just delete the user
+      await User.findByIdAndDelete(userId);
     }
 
-    await User.findByIdAndDelete(userId);
-    res.json({ message: "User deleted successfully" });
+    res.status(200).json({ message: "User, Business, and Subscriptions deleted successfully" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("Delete Error:", error);
+    res.status(500).json({ message: "Server error during deletion" });
   }
 };
