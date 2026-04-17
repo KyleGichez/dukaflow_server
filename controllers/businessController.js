@@ -40,6 +40,11 @@ exports.createBusinessWithAdmin = async (req, res) => {
     business.ownerId = adminUser._id;
     await business.save();
 
+    // 5. Update the Business with the Owner's ID
+    await Business.findByIdAndUpdate(business._id, {
+      ownerId: adminUser._id
+    });
+
     await Subscription.create({
       businessId: business._id,
       plan: "trial",
@@ -70,6 +75,41 @@ exports.getMyBusinessProfile = async (req, res) => {
       ...business._doc,
       subscription: subscription || null
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Create staff user under the same business
+exports.createStaffUser = async (req, res) => {
+  try {
+    const { fname, lname, email, phone, password, role, businessId } = req.body;
+
+    // 1. Validate if user exists
+    const existingUser = await User.findOne({ $or: [{ phone }, { email }] });
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    // 2. Fetch business details to copy the businessName (optional but keeps your User model consistent)
+    const business = await Business.findById(businessId);
+    if (!business) return res.status(404).json({ message: "No Business details found." });
+
+    // 3. Create the Staff User
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newStaff = await User.create({
+      fname,
+      lname,
+      email,
+      phone,
+      password: hashedPassword,
+      role: role || "cashier", 
+      businessId: business._id,
+      businessName: business.businessName, 
+      city: business.city 
+    });
+
+    res.status(201).json(newStaff);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
