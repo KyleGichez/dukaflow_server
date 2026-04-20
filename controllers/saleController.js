@@ -28,7 +28,7 @@ function getDateFilter(range) {
 exports.createSale = async (req, res) => {
   try {
     const { productId, quantitySold, paymentMethod, date } = req.body;
-    const businessId = req.user.busisnessId; // Extract from Auth Middleware
+    const businessId = req.user.businessId; // Extract from Auth Middleware
 
     // 1. Find product ensuring it belongs to this workspace
     const product = await Product.findOne({ _id: productId, businessId });
