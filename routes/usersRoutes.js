@@ -12,7 +12,7 @@ const {
 } = require("../controllers/userController");
 const protect = require("../middleware/authMiddleware");
 
-router.put("/settings", protect, updateSettings);
+router.put("/", protect, updateSettings);
 router.get("/", protect, getAllUsers);
 router.get("/businesses", protect, getAllBusinesses);
 router.get("/business", protect, getBusinessUsers);
