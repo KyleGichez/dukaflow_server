@@ -60,7 +60,7 @@ exports.stkPush = async (req, res) => {
         PartyB: process.env.MPESA_SHORTCODE,
         PhoneNumber: formattedPhone,
         CallBackURL: process.env.MPESA_CALLBACK_URL,
-        AccountReference: "4051509",
+        AccountReference: "DukaFlow Inventory Manager",
         TransactionDesc: `Subscription for ${plan}`,
       },
       {
