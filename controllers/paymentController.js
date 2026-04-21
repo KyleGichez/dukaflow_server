@@ -93,7 +93,7 @@ exports.mpesaCallback = async (req, res) => {
         Date.now() + (amountPaid >= 30000 ? 365 : 30) * 24 * 60 * 60 * 1000
       );
 
-      await user.save();
+      await business.save();
       console.log(`Subscription activated for ${business.email}`);
     }
   }
