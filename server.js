@@ -33,6 +33,7 @@ app.use("/api/admin/business",require('./routes/businessRoutes'));
 app.use("/api/admin/businesses",require('./routes/usersRoutes'));
 app.use("/api/admin/users",require('./routes/usersRoutes'));
 app.use("/api/admin/subscription",require('./routes/subscriptionRoutes'));
+app.use("/api/admin/lifetimeaccess",require('./routes/subscriptionRoutes'));
 app.use("/api/myprofile",require('./routes/businessRoutes'));
 app.use("/api/settings",require('./routes/usersRoutes'));
 

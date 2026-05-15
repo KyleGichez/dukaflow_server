@@ -1,12 +1,13 @@
 const express = require("express");
 const router = express.Router();
 
-
 const {
-    getAllSubscriptions
-  } = require("../controllers/subscriptionController");
-  const protect = require("../middleware/authMiddleware");
-  
-  router.get("/", protect, getAllSubscriptions);
+  getAllSubscriptions,
+  activateLifetime,
+} = require("../controllers/subscriptionController");
+const protect = require("../middleware/authMiddleware");
 
-  module.exports = router;
+router.get("/", protect, getAllSubscriptions);
+router.put("/:id/lifetime", protectAdmin, activateLifetime);
+
+module.exports = router;
