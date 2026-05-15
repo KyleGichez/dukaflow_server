@@ -24,6 +24,11 @@ exports.getSuperAdminDashboard = async (req, res) => {
       plan: "yearly",
       status: "active",
     });
+
+    const lifetimeSubscriptions = await Subscription.countDocuments({
+      plan: "lifetime",
+      status: "active"
+    })
     
 
     const recentUsers = await User.find()
@@ -42,6 +47,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
           expired: expiredSubscriptions,
           monthly: monthlySubscriptions,
           yearly: yearlySubscriptions,
+          lifetime: lifetimeSubscriptions,
         },
       },
       recentUsers,
