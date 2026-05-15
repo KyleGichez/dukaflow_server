@@ -8,6 +8,6 @@ const {
 const protect = require("../middleware/authMiddleware");
 
 router.get("/", protect, getAllSubscriptions);
-router.put("/:id/lifetime", protectAdmin, activateLifetime);
+router.put("/:id", protect, activateLifetime);
 
 module.exports = router;
