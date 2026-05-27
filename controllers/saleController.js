@@ -32,7 +32,7 @@ exports.createSale = async (req, res) => {
   try {
     const { items, paymentMethod, date } = req.body;
     const businessId = req.user.businessId; 
-    const userId = req.user?._id || req.user?.id;
+    const userId = req.user._id; 
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Your customer shopping basket is empty" });
@@ -69,10 +69,6 @@ exports.createSale = async (req, res) => {
         soldBy: userId // Track who recorded the receipt
       });
 
-      if (!userId) {
-        throw new Error("User ID missing from request.");
-      }
-
       await newSale.save({ session });
 
       // 5. Deduct inventory item stock 
@@ -87,7 +83,7 @@ exports.createSale = async (req, res) => {
 
     const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
-      .populate("soldBy", "fname lname role")
+      .populate("soldBy", "fname")
       .sort({ createdAt: -1 });
 
     res.status(201).json({ success: true, sales: newlyCreatedSales });
@@ -107,18 +103,13 @@ exports.getSales = async (req, res) => {
     
     if (!(startDate instanceof Date)) startDate = new Date(startDate);
 
-    const sales = await Sale.find({
-      businessId,
-      date: { $gte: startDate },
-    })
-      .populate("productId")
-      .populate({
-        path: "soldBy",
-        select: "fname lname role",
+    const sales = await Sale.find({ 
+        businessId, 
+        date: { $gte: startDate } 
       })
-      .sort({ createdAt: -1 });
-
-    console.log("FETCHED SALES:", sales);
+      .populate("productId")
+      .populate("soldBy", "fname") // Populate the user who sold the item
+      .sort({ date: -1 });
       
     res.json(sales);
   } catch (error) {
