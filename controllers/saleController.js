@@ -24,51 +24,79 @@ function getDateFilter(range) {
   return startDate;
 }
 
-// Create sale and update stock
+// Create sale (Handles multi-item customer shopping baskets) and updates stock
 exports.createSale = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const { productId, quantitySold, paymentMethod, date } = req.body;
+    const { items, paymentMethod, date } = req.body;
     const businessId = req.user.businessId; 
-    const userId = req.user._id; // Extract user ID from authenticated middleware
+    const userId = req.user._id; 
 
-    // 1. Find product ensuring it belongs to this workspace
-    const product = await Product.findOne({ _id: productId, businessId });
-    if (!product) return res.status(404).json({ message: "Product not found in your workspace" });
-
-    // 2. Check stock
-    if (product.quantity < quantitySold) {
-      return res.status(400).json({ message: "Insufficient stock" });
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "Your customer shopping basket is empty" });
     }
 
-    // 3. Calculate Total
-    const totalPrice = product.price * quantitySold;
+    const processedSalesIds = [];
 
-    // 4. Create sale with businessId and soldBy fields
-    const newSale = new Sale({
-      productId,
-      quantitySold,
-      unitPrice: product.price,
-      totalPrice,
-      paymentMethod,
-      date,
-      businessId,
-      soldBy: userId // Save who made the sale
-    });
+    for (const item of items) {
+      const { productId, quantitySold } = item;
 
-    await newSale.save();
+      // 1. Find product ensuring it belongs to this specific business workspace
+      const product = await Product.findOne({ _id: productId, businessId }).session(session);
+      if (!product) {
+        throw new Error(`Product with ID ${productId} was not found in your workspace.`);
+      }
 
-    // 5. Deduct stock 
-    product.quantity -= quantitySold;
-    await product.save();
+      // 2. Check stock levels
+      if (product.quantity < Number(quantitySold)) {
+        throw new Error(`Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`);
+      }
 
-    // Populate both the product info AND the cashier/staff details
-    const populatedSale = await Sale.findById(newSale._id)
+      // 3. Calculate Item Total Price
+      const totalPrice = product.price * Number(quantitySold);
+
+      // 4. Instantiate separate item sale record line
+      const newSale = new Sale({
+        productId,
+        quantitySold: Number(quantitySold),
+        unitPrice: product.price,
+        totalPrice,
+        paymentMethod,
+        date: date || new Date(),
+        businessId,
+        soldBy: userId // Track who recorded the receipt
+      });
+
+      await newSale.save({ session });
+
+      // 5. Deduct inventory item stock 
+      product.quantity -= Number(quantitySold);
+      await product.save({ session });
+
+      // Track the ID to populate it later for the frontend application table
+      processedSalesIds.push(newSale._id);
+    }
+
+    // If all items pass stock checks successfully, commit changes to MongoDB
+    await session.commitTransaction();
+    session.endSession();
+
+    // 6. Fetch and fully populate all sales records generated in this checkout session
+    const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
-      .populate("soldBy", "name"); // Fetch only the name field of the user
+      .populate("soldBy", "fname")
+      .sort({ createdAt: -1 });
 
-    res.status(201).json(populatedSale);
+    // Send payload response back to your client-side React table UI
+    res.status(201).json({ success: true, sales: newlyCreatedSales });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    // If any product item errors out or lacks inventory, cancel all stock modifications instantly
+    await session.abortTransaction();
+    session.endSession();
+    res.status(400).json({ message: error.message });
   }
 };
 
