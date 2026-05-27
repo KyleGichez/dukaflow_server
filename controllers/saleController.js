@@ -32,7 +32,7 @@ exports.createSale = async (req, res) => {
   try {
     const { items, paymentMethod, date } = req.body;
     const businessId = req.user.businessId; 
-    const userId = req.user?.id || req.user?._id;
+    const userId = req.user?._id;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Your customer shopping basket is empty" });
