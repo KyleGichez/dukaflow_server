@@ -120,11 +120,11 @@ exports.mpesaCallback = async (req, res) => {
 
         business.subscription.status = "active";
         business.subscription.plan =
-          amountPaid >= 30000 ? "yearly" : "monthly";
+          amountPaid >= 18000 ? "yearly" : "monthly";
         business.subscription.startDate = new Date();
         business.subscription.endDate = new Date(
           Date.now() +
-            (amountPaid >= 30000 ? 365 : 30) *
+            (amountPaid >= 18000 ? 365 : 30) *
               24 *
               60 *
               60 *

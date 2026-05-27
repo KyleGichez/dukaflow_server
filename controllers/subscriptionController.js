@@ -7,10 +7,10 @@ const getAllSubscriptions = async (req, res) => {
     const subscriptions = await Subscription.find({})
       .populate({
         path: "businessId",
-        select: "businessName", // Fields from the Business model
+        select: "businessName",
         populate: {
           path: "ownerId",
-          select: "phone email city", // Fields from the User model (the owner)
+          select: "phone email city", 
         },
       })
       .sort({ createdAt: -1 });

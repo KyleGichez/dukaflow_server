@@ -28,7 +28,8 @@ function getDateFilter(range) {
 exports.createSale = async (req, res) => {
   try {
     const { productId, quantitySold, paymentMethod, date } = req.body;
-    const businessId = req.user.businessId; // Extract from Auth Middleware
+    const businessId = req.user.businessId; 
+    const userId = req.user._id; // Extract user ID from authenticated middleware
 
     // 1. Find product ensuring it belongs to this workspace
     const product = await Product.findOne({ _id: productId, businessId });
@@ -42,7 +43,7 @@ exports.createSale = async (req, res) => {
     // 3. Calculate Total
     const totalPrice = product.price * quantitySold;
 
-    // 4. Create sale with ownerId
+    // 4. Create sale with businessId and soldBy fields
     const newSale = new Sale({
       productId,
       quantitySold,
@@ -50,16 +51,21 @@ exports.createSale = async (req, res) => {
       totalPrice,
       paymentMethod,
       date,
-      businessId // Link to workspace
+      businessId,
+      soldBy: userId // Save who made the sale
     });
 
     await newSale.save();
 
-    // 5. Deduct stock (specifically for this product and owner)
+    // 5. Deduct stock 
     product.quantity -= quantitySold;
     await product.save();
 
-    const populatedSale = await Sale.findById(newSale._id).populate("productId");
+    // Populate both the product info AND the cashier/staff details
+    const populatedSale = await Sale.findById(newSale._id)
+      .populate("productId")
+      .populate("soldBy", "name"); // Fetch only the name field of the user
+
     res.status(201).json(populatedSale);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -71,7 +77,6 @@ exports.getSales = async (req, res) => {
     const businessId = req.user.businessId;
     let startDate = getDateFilter(req.query.range);
     
-    // Ensure startDate is a Date object for MongoDB
     if (!(startDate instanceof Date)) startDate = new Date(startDate);
 
     const sales = await Sale.find({ 
@@ -79,6 +84,7 @@ exports.getSales = async (req, res) => {
         date: { $gte: startDate } 
       })
       .populate("productId")
+      .populate("soldBy", "name") // Populate the user who sold the item
       .sort({ date: -1 });
       
     res.json(sales);
@@ -115,9 +121,9 @@ exports.getSalesSummary = async (req, res) => {
   try {
     const businessId = req.user.businessId;
     
-    // Validate OwnerId early
+    // Validate businessId early
     if (!mongoose.Types.ObjectId.isValid(businessId)) {
-       return res.status(400).json({ message: "Invalid Owner ID" });
+       return res.status(400).json({ message: "Invalid Business ID" });
     }
 
     const startDate = getDateFilter(req.query.range);

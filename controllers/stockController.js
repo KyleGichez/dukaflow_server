@@ -7,7 +7,7 @@ exports.createStock = async (req, res) => {
     const { date, category, name, quantityAdded, units, price } = req.body;
     const businessId = req.user.businessId; // Extract from Auth Middleware
 
-    // 1. Create the Stock Entry linked to the owner
+    // 1. Create the Stock Entry linked to the business
     const stockItem = await Stock.create({
       date,
       category,
@@ -28,7 +28,7 @@ exports.createStock = async (req, res) => {
           units: units,
           price: Number(price) 
         },
-        $setOnInsert: { businessId } // Ensure ownerId is set if product is newly created
+        $setOnInsert: { businessId } // Ensure buisnessId is set if product is newly created
       },
       { upsert: true, new: true, runValidators: true }
     );

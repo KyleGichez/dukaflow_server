@@ -7,7 +7,7 @@ exports.createProduct = async (req, res) => {
     const { name, category, price, quantity, units } = req.body;
     const businessId = req.user.businessId; // Extracted from JWT middleware
 
-    // 1. Create the Product with ownerId
+    // 1. Create the Product with businessId
     const newProduct = await Product.create({
       name: name.trim(),
       category,
@@ -17,7 +17,7 @@ exports.createProduct = async (req, res) => {
       businessId, // Link to the workspace
     });
 
-    // 2. Create initial Stock entry with ownerId
+    // 2. Create initial Stock entry with businessId
     await Stock.create({
       name: newProduct.name,
       category: newProduct.category,
@@ -35,10 +35,9 @@ exports.createProduct = async (req, res) => {
   }
 };
 
-// Get All Products (Scoped to ownerId)
+// Get All Products (Scoped to businessId)
 exports.getProducts = async (req, res) => {
   try {
-    // Only fetch products belonging to this workspace
     const products = await Product.find({ businessId: req.user.businessId });
     res.json(products);
   } catch (error) {
@@ -53,7 +52,7 @@ exports.updateProduct = async (req, res) => {
     const businessId = req.user.businessId;
     const productId = req.params.id;
 
-    // 1. Find the product and ensure it belongs to this owner
+    // 1. Find the product and ensure it belongs to this business
     const oldProduct = await Product.findOne({ _id: productId, businessId });
     if (!oldProduct) return res.status(404).json({ message: "Product not found in your workspace" });
 
@@ -66,7 +65,7 @@ exports.updateProduct = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // 3. Update the Stock record (Scope by product ID and businessId)
+    // 3. Update the Stock record (Scope by productId and businessId)
     await Stock.findOneAndUpdate(
       { product: productId, businessId }, 
       { 
