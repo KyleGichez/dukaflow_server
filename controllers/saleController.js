@@ -83,7 +83,7 @@ exports.createSale = async (req, res) => {
 
     const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
-      .populate("soldBy", "fname")
+      .populate("soldBy", "fname lname role")
       .sort({ createdAt: -1 });
 
     res.status(201).json({ success: true, sales: newlyCreatedSales });
@@ -103,13 +103,18 @@ exports.getSales = async (req, res) => {
     
     if (!(startDate instanceof Date)) startDate = new Date(startDate);
 
-    const sales = await Sale.find({ 
-        businessId, 
-        date: { $gte: startDate } 
-      })
+    const sales = await Sale.find({
+      businessId,
+      date: { $gte: startDate },
+    })
       .populate("productId")
-      .populate("soldBy", "fname") // Populate the user who sold the item
-      .sort({ date: -1 });
+      .populate({
+        path: "soldBy",
+        select: "fname lname role",
+      })
+      .sort({ createdAt: -1 });
+
+    console.log("FETCHED SALES:", sales);
       
     res.json(sales);
   } catch (error) {
