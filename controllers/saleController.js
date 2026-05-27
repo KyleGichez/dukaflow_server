@@ -32,7 +32,7 @@ exports.createSale = async (req, res) => {
   try {
     const { items, paymentMethod, date } = req.body;
     const businessId = req.user.businessId; 
-    const userId = req.user.id; 
+    const userId = req.user?.id || req.user?._id;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Your customer shopping basket is empty" });
@@ -83,7 +83,7 @@ exports.createSale = async (req, res) => {
 
     const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
-      .populate("soldBy", "fname")
+      .populate("soldBy", "fname").lean()
       .sort({ createdAt: -1 });
 
     res.status(201).json({ success: true, sales: newlyCreatedSales });
@@ -108,7 +108,7 @@ exports.getSales = async (req, res) => {
         date: { $gte: startDate } 
       })
       .populate("productId")
-      .populate("soldBy", "fname") // Populate the user who sold the item
+      .populate("soldBy", "fname").lean() // Populate the user who sold the item
       .sort({ date: -1 });
       
     res.json(sales);
