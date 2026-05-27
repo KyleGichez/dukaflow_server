@@ -75,25 +75,21 @@ exports.createSale = async (req, res) => {
       product.quantity -= Number(quantitySold);
       await product.save({ session });
 
-      // Track the ID to populate it later for the frontend application table
       processedSalesIds.push(newSale._id);
     }
 
-    // If all items pass stock checks successfully, commit changes to MongoDB
     await session.commitTransaction();
     session.endSession();
 
-    // 6. Fetch and fully populate all sales records generated in this checkout session
     const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
       .populate("soldBy", "fname")
       .sort({ createdAt: -1 });
 
-    // Send payload response back to your client-side React table UI
     res.status(201).json({ success: true, sales: newlyCreatedSales });
 
   } catch (error) {
-    // If any product item errors out or lacks inventory, cancel all stock modifications instantly
+
     await session.abortTransaction();
     session.endSession();
     res.status(400).json({ message: error.message });
@@ -112,7 +108,7 @@ exports.getSales = async (req, res) => {
         date: { $gte: startDate } 
       })
       .populate("productId")
-      .populate("soldBy", "name") // Populate the user who sold the item
+      .populate("soldBy", "fname") // Populate the user who sold the item
       .sort({ date: -1 });
       
     res.json(sales);
