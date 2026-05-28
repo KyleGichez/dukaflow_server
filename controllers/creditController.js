@@ -75,34 +75,35 @@ exports.addPayment = async (req, res) => {
     }
 
     const credit = await Credit.findById(req.params.id);
-
     if (!credit) {
       return res.status(404).json({ message: "Credit not found" });
     }
 
     const total = credit.totalAmount || credit.totalPrice || 0;
-    const currentPaid = credit.amountPaid || 0;
 
-    const newPaid = currentPaid + Number(amount);
-
-    if (newPaid > total) {
+    if (credit.amountPaid + Number(amount) > total) {
       return res.status(400).json({
         message: "Payment exceeds remaining balance",
       });
     }
 
-    credit.amountPaid = newPaid;
-    credit.lastPaidDate = new Date();
+    const updated = await Credit.findByIdAndUpdate(
+      req.params.id,
+      {
+        $inc: { amountPaid: Number(amount) },
+        $set: {
+          lastPaidDate: new Date(),
+        },
+      },
+      { new: true }
+    );
 
-    if (credit.amountPaid >= total) {
-      credit.status = "CLEARED";
-    } else {
-      credit.status = "PARTIAL";
-    }
+    const newBalance = total - updated.amountPaid;
 
-    await credit.save();
+    updated.status = newBalance <= 0 ? "CLEARED" : "PARTIAL";
+    await updated.save();
 
-    res.status(200).json(credit);
+    res.status(200).json(updated);
   } catch (error) {
     res.status(500).json({
       message: "Failed to add payment",

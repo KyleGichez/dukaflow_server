@@ -3,15 +3,30 @@ const mongoose = require("mongoose");
 const creditSchema = new mongoose.Schema(
   {
     saleId: { type: mongoose.Schema.Types.ObjectId, ref: "Sale" },
+
     customerName: String,
-    customerPhone: Number,
-    totalAmount: Number,
-    amountPaid: Number,
-    balance: Number,
+    customerPhone: String,
+
+    totalAmount: { type: Number, required: true },
+    amountPaid: { type: Number, default: 0 },
+
     nextPaymentDate: Date,
-    paymentHistory: [{ date: Date, amount: Number, method: String }],
+
+    status: {
+      type: String,
+      enum: ["PENDING", "PARTIAL", "CLEARED"],
+      default: "PENDING",
+    },
+
+    paymentHistory: [
+      {
+        date: { type: Date, default: Date.now },
+        amount: Number,
+        method: String,
+      },
+    ],
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Product", creditSchema);
+module.exports = mongoose.model("Credit", creditSchema);
