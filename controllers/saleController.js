@@ -1,5 +1,6 @@
 const Sale = require("../models/Sale");
 const Product = require("../models/Product");
+const Credit = require("../models/Credit");
 const mongoose = require("mongoose");
 
 function getDateFilter(range) {
@@ -71,6 +72,18 @@ exports.createSale = async (req, res) => {
 
       await newSale.save({ session });
 
+      if (paymentMethod === "Credit") {
+        await Credit.create({
+          saleId: sale._id,
+          customerName,
+          customerPhone,
+          totalAmount,
+          amountPaid: 0,
+          status: "PENDING",
+          paymentHistory: [],
+        });
+      }
+
       // 5. Deduct inventory item stock 
       product.quantity -= Number(quantitySold);
       await product.save({ session });
@@ -94,6 +107,8 @@ exports.createSale = async (req, res) => {
     session.endSession();
     res.status(400).json({ message: error.message });
   }
+
+  
 };
 
 exports.getSales = async (req, res) => {
