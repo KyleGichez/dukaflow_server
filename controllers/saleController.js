@@ -26,7 +26,7 @@ function getDateFilter(range) {
 }
 
 exports.createSale = async (req, res) => {
-  const { items, paymentMethod, date, customerName, customerPhone, nextPaymentDate } = req.body;
+  const { items, paymentMethod, date, customerName, customerPhone, nextPaymentDate, balance } = req.body;
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -64,10 +64,9 @@ exports.createSale = async (req, res) => {
         date: date || new Date(),
         businessId,
         soldBy: userId,
+        balance,
         nextPaymentDate,
       });
-
-      await newSale.save({ session });
 
       if (paymentMethod === "Credit") {
         await Credit.create(
@@ -89,6 +88,8 @@ exports.createSale = async (req, res) => {
           { session }
         );
       }
+
+      await newSale.save({ session });
 
       product.quantity -= Number(quantitySold);
       await product.save({ session });
