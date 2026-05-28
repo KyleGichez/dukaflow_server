@@ -64,6 +64,7 @@ exports.createSale = async (req, res) => {
         date: date || new Date(),
         businessId,
         soldBy: userId,
+        nextPaymentDate,
       });
 
       await newSale.save({ session });
