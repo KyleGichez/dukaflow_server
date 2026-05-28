@@ -20,13 +20,13 @@ exports.createCredit = async (req, res) => {
 
 exports.getCredits = async (req, res) => {
   try {
-    const credits = await Credit.find().sort({ createdAt: -1 });
+    // Populate product fields so frontend credit.productId?.name works out-of-the-box
+    const credits = await Credit.find()
+      .populate("productId")
+      .sort({ createdAt: -1 });
     res.status(200).json(credits);
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch credits",
-      error: error.message,
-    });
+    res.status(500).json({ message: "Failed to fetch credits", error: error.message });
   }
 };
 

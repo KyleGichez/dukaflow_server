@@ -25,22 +25,18 @@ function getDateFilter(range) {
   return startDate;
 }
 
-// Create sale (Handles multi-item customer shopping baskets) and updates stock
 exports.createSale = async (req, res) => {
-  const { items, paymentMethod, date, customerName, customerPhone } = req.body;
+  const { items, paymentMethod, date, customerName, customerPhone, nextPaymentDate } = req.body;
 
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { items, paymentMethod, date } = req.body;
     const businessId = req.user.businessId;
     const userId = req.user?.id || req.user?._id;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Your customer shopping basket is empty" });
+      return res.status(400).json({ message: "Your customer shopping basket is empty" });
     }
 
     const processedSalesIds = [];
@@ -48,28 +44,17 @@ exports.createSale = async (req, res) => {
     for (const item of items) {
       const { productId, quantitySold } = item;
 
-      // 1. Find product ensuring it belongs to this specific business workspace
-      const product = await Product.findOne({
-        _id: productId,
-        businessId,
-      }).session(session);
+      const product = await Product.findOne({ _id: productId, businessId }).session(session);
       if (!product) {
-        throw new Error(
-          `Product with ID ${productId} was not found in your workspace.`
-        );
+        throw new Error(`Product with ID ${productId} was not found in your workspace.`);
       }
 
-      // 2. Check stock levels
       if (product.quantity < Number(quantitySold)) {
-        throw new Error(
-          `Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`
-        );
+        throw new Error(`Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`);
       }
 
-      // 3. Calculate Item Total Price
       const totalPrice = product.price * Number(quantitySold);
 
-      // 4. Instantiate separate item sale record line
       const newSale = new Sale({
         productId,
         quantitySold: Number(quantitySold),
@@ -78,7 +63,7 @@ exports.createSale = async (req, res) => {
         paymentMethod,
         date: date || new Date(),
         businessId,
-        soldBy: userId, // Track who recorded the receipt
+        soldBy: userId,
       });
 
       await newSale.save({ session });
@@ -88,17 +73,15 @@ exports.createSale = async (req, res) => {
           [
             {
               saleId: newSale._id,
+              productId: productId, // Crucial link for frontend table display
+              quantitySold: Number(quantitySold),
               customerName: customerName || "Walking Client",
               customerPhone: customerPhone || "N/A",
-
               totalAmount: totalPrice,
-
               amountPaid: 0,
-
-              nextPaymentDate: null,
-
+              balance: totalPrice,
+              nextPaymentDate: nextPaymentDate || null,
               status: "PENDING",
-
               paymentHistory: [],
             },
           ],
@@ -106,7 +89,6 @@ exports.createSale = async (req, res) => {
         );
       }
 
-      // 5. Deduct inventory item stock
       product.quantity -= Number(quantitySold);
       await product.save({ session });
 
@@ -116,9 +98,7 @@ exports.createSale = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    const newlyCreatedSales = await Sale.find({
-      _id: { $in: processedSalesIds },
-    })
+    const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
       .populate("soldBy", "fname")
       .lean()
