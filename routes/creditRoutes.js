@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 
 const auth = require("../middleware/authMiddleware");
-const checkSub = require("../middleware/checkSub");
 const authorize = require("../middleware/authorize");
 
 const {
@@ -16,7 +15,7 @@ const {
 
 router.use(auth);
 
-router.post("/", checkSub, createCredit);
+router.post("/", createCredit);
 router.get("/", getCredits);
 router.get("/:id", getCreditById);
 router.put("/:id", updateCredit);
@@ -26,7 +25,6 @@ router.patch("/:id/pay", addPayment);
 
 router.delete(
   "/:id",
-  checkSub,
   authorize(["admin", "manager"]),
   deleteCredit
 );
