@@ -68,42 +68,54 @@ exports.updateCredit = async (req, res) => {
 
 exports.addPayment = async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amount, nextPaymentDate, method } = req.body;
 
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: "Invalid payment amount" });
     }
 
     const credit = await Credit.findById(req.params.id);
+
     if (!credit) {
       return res.status(404).json({ message: "Credit not found" });
     }
 
-    const total = credit.totalAmount || credit.totalPrice || 0;
+    const total = credit.totalAmount || 0;
+    const currentPaid = credit.amountPaid || 0;
 
-    if (credit.amountPaid + Number(amount) > total) {
+    const newPaid = currentPaid + Number(amount);
+
+    if (newPaid > total) {
       return res.status(400).json({
         message: "Payment exceeds remaining balance",
       });
     }
 
-    const updated = await Credit.findByIdAndUpdate(
-      req.params.id,
-      {
-        $inc: { amountPaid: Number(amount) },
-        $set: {
-          lastPaidDate: new Date(),
-        },
-      },
-      { new: true }
-    );
+    // ✅ update payment
+    credit.amountPaid = newPaid;
 
-    const newBalance = total - updated.amountPaid;
+    // ✅ update balance (IMPORTANT)
+    credit.balance = total - newPaid;
 
-    updated.status = newBalance <= 0 ? "CLEARED" : "PARTIAL";
-    await updated.save();
+    // ✅ update next payment date (THIS WAS MISSING)
+    if (nextPaymentDate) {
+      credit.nextPaymentDate = nextPaymentDate;
+    }
 
-    res.status(200).json(updated);
+    // ✅ payment history (CRITICAL FOR TRACKING)
+    credit.paymentHistory.push({
+      amount: Number(amount),
+      method: method || "Cash",
+      date: new Date(),
+    });
+
+    // ✅ status update
+    credit.status =
+      newPaid >= total ? "CLEARED" : newPaid > 0 ? "PARTIAL" : "PENDING";
+
+    await credit.save();
+
+    res.status(200).json(credit);
   } catch (error) {
     res.status(500).json({
       message: "Failed to add payment",
