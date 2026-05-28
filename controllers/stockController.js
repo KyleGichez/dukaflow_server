@@ -4,12 +4,12 @@ const Product = require("../models/Product");
 // Create Stock
 exports.createStock = async (req, res) => {
   try {
-    const { date, category, name, quantityAdded, units, price } = req.body;
+    const {category, name, quantityAdded, units, price } = req.body;
     const businessId = req.user.businessId; // Extract from Auth Middleware
 
     // 1. Create the Stock Entry linked to the business
     const stockItem = await Stock.create({
-      date,
+      date: new Date(),
       category,
       name: name.trim(),
       quantityAdded: Number(quantityAdded),
