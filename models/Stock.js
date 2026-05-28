@@ -8,7 +8,10 @@ const stockSchema = new mongoose.Schema(
       required: false,
       default: null
     },
-    date: {type: Date, required: true},
+    date: {
+      type: Date,
+      default: Date.now
+    },
     category: {type: String, required: true},
     name: {type: String, required: true},
     quantityAdded: { type: Number, required: true },
