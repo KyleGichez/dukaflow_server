@@ -74,10 +74,11 @@ exports.updateProduct = async (req, res) => {
           category, 
           price, 
           units, 
-          quantityAdded: newTotal 
+          quantityAdded: newTotal,
+          date: new Date(), 
         } 
       },
-      { upsert: true }
+      { upsert: true, returnDocument: 'after'}
     );
 
     res.json(updatedProduct);

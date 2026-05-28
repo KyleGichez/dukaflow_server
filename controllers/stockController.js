@@ -72,7 +72,7 @@ exports.updateStock = async (req, res) => {
         quantityAdded: newQuantity, 
         price: newPrice 
       },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
 
     // 4. Update the Product Table within the same workspace
