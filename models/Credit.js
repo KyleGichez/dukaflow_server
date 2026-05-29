@@ -18,7 +18,7 @@ const creditSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["PENDING", "PARTIAL", "CLEARED"],
+      enum: ["PENDING", "PARTIAL", "PAID"],
       default: "PENDING",
     },
 
