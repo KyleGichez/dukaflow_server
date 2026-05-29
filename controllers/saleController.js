@@ -38,7 +38,7 @@ exports.createSale = async (req, res) => {
     customerName,
     customerPhone,
     nextPaymentDate,
-    balance,
+    balance, // Explicit remaining balance if partial payment was given during checkout
   } = req.body;
 
   const session = await mongoose.startSession();
@@ -79,19 +79,17 @@ exports.createSale = async (req, res) => {
       const totalPrice = product.price * Number(quantitySold);
 
       // =========================
-      // PAYMENT STATUS LOGIC
+      // EQUALIZED PAYMENT MATH
       // =========================
-
       let paymentStatus = "Paid";
-
-      const calculatedBalance =
-        paymentMethod === "Credit"
-          ? Number(balance ?? totalPrice)
-          : 0;
-
-      const amountPaid = totalPrice - calculatedBalance;
+      let calculatedBalance = 0;
+      let amountPaid = totalPrice;
 
       if (paymentMethod === "Credit") {
+        // If balance isn't provided, it means 0 was paid upfront, so full totalPrice is owed
+        calculatedBalance = balance !== undefined && balance !== null ? Number(balance) : totalPrice;
+        amountPaid = totalPrice - calculatedBalance;
+
         if (calculatedBalance <= 0) {
           paymentStatus = "Paid";
         } else if (amountPaid > 0) {
@@ -104,7 +102,6 @@ exports.createSale = async (req, res) => {
       // =========================
       // CREATE SALE
       // =========================
-
       const newSale = new Sale({
         productId,
         quantitySold: Number(quantitySold),
@@ -119,10 +116,12 @@ exports.createSale = async (req, res) => {
         nextPaymentDate,
       });
 
+      // Save sale item within active transaction context
+      await newSale.save({ session });
+
       // =========================
       // CREATE CREDIT RECORD
       // =========================
-
       if (paymentMethod === "Credit") {
         let creditStatus = "PENDING";
 
@@ -132,29 +131,21 @@ exports.createSale = async (req, res) => {
           creditStatus = "PARTIAL";
         }
 
+        // Fix: Pass an object directly instead of an array wrapped element if handled cleanly, 
+        // or ensure array options include session execution configuration accurately.
         await Credit.create(
           [
             {
               saleId: newSale._id,
               productId,
               quantitySold: Number(quantitySold),
-
-              customerName:
-                customerName?.trim() || "Walking Client",
-
-              customerPhone:
-                customerPhone?.trim() || "N/A",
-
+              customerName: customerName?.trim() || "Walking Client",
+              customerPhone: customerPhone?.trim() || "N/A",
               totalAmount: totalPrice,
-
-              amountPaid,
-
+              amountPaid: amountPaid, 
               balance: calculatedBalance,
-
               nextPaymentDate: nextPaymentDate || null,
-
               status: creditStatus,
-
               paymentHistory: [],
             },
           ],
@@ -163,17 +154,9 @@ exports.createSale = async (req, res) => {
       }
 
       // =========================
-      // SAVE SALE
-      // =========================
-
-      await newSale.save({ session });
-
-      // =========================
       // UPDATE STOCK
       // =========================
-
       product.quantity -= Number(quantitySold);
-
       await product.save({ session });
 
       processedSalesIds.push(newSale._id);
@@ -199,7 +182,6 @@ exports.createSale = async (req, res) => {
     session.endSession();
 
     console.error("CREATE SALE ERROR:", error);
-
     res.status(400).json({
       message: error.message,
     });
