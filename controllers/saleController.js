@@ -11,22 +11,35 @@ function getDateFilter(range) {
     case "today":
       startDate.setHours(0, 0, 0, 0);
       break;
+
     case "this-week":
       startDate.setDate(now.getDate() - 7);
       break;
+
     case "this-month":
       startDate.setMonth(now.getMonth() - 1);
       break;
+
     case "all-time":
       return new Date(0);
+
     default:
       return new Date(0);
   }
+
   return startDate;
 }
 
 exports.createSale = async (req, res) => {
-  const { items, paymentMethod, date, customerName, customerPhone, nextPaymentDate, balance } = req.body;
+  const {
+    items,
+    paymentMethod,
+    date,
+    customerName,
+    customerPhone,
+    nextPaymentDate,
+    balance,
+  } = req.body;
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -36,7 +49,9 @@ exports.createSale = async (req, res) => {
     const userId = req.user?.id || req.user?._id;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "Your customer shopping basket is empty" });
+      return res.status(400).json({
+        message: "Your customer shopping basket is empty",
+      });
     }
 
     const processedSalesIds = [];
@@ -44,16 +59,51 @@ exports.createSale = async (req, res) => {
     for (const item of items) {
       const { productId, quantitySold } = item;
 
-      const product = await Product.findOne({ _id: productId, businessId }).session(session);
+      const product = await Product.findOne({
+        _id: productId,
+        businessId,
+      }).session(session);
+
       if (!product) {
-        throw new Error(`Product with ID ${productId} was not found in your workspace.`);
+        throw new Error(
+          `Product with ID ${productId} was not found in your workspace.`
+        );
       }
 
       if (product.quantity < Number(quantitySold)) {
-        throw new Error(`Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`);
+        throw new Error(
+          `Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`
+        );
       }
 
       const totalPrice = product.price * Number(quantitySold);
+
+      // =========================
+      // PAYMENT STATUS LOGIC
+      // =========================
+
+      let paymentStatus = "Paid";
+
+      const calculatedBalance =
+        paymentMethod === "Credit"
+          ? Number(balance ?? totalPrice)
+          : 0;
+
+      const amountPaid = totalPrice - calculatedBalance;
+
+      if (paymentMethod === "Credit") {
+        if (calculatedBalance <= 0) {
+          paymentStatus = "Paid";
+        } else if (amountPaid > 0) {
+          paymentStatus = "Partial";
+        } else {
+          paymentStatus = "Pending";
+        }
+      }
+
+      // =========================
+      // CREATE SALE
+      // =========================
 
       const newSale = new Sale({
         productId,
@@ -61,27 +111,50 @@ exports.createSale = async (req, res) => {
         unitPrice: product.price,
         totalPrice,
         paymentMethod,
+        paymentStatus,
         date: date || new Date(),
         businessId,
         soldBy: userId,
-        balance,
+        balance: calculatedBalance,
         nextPaymentDate,
       });
 
+      // =========================
+      // CREATE CREDIT RECORD
+      // =========================
+
       if (paymentMethod === "Credit") {
+        let creditStatus = "PENDING";
+
+        if (calculatedBalance <= 0) {
+          creditStatus = "PAID";
+        } else if (amountPaid > 0) {
+          creditStatus = "PARTIAL";
+        }
+
         await Credit.create(
           [
             {
               saleId: newSale._id,
-              productId: productId, // Crucial link for frontend table display
+              productId,
               quantitySold: Number(quantitySold),
-              customerName: customerName || "Walking Client",
-              customerPhone: customerPhone || "N/A",
+
+              customerName:
+                customerName?.trim() || "Walking Client",
+
+              customerPhone:
+                customerPhone?.trim() || "N/A",
+
               totalAmount: totalPrice,
-              amountPaid: 0,
-              balance: totalPrice,
+
+              amountPaid,
+
+              balance: calculatedBalance,
+
               nextPaymentDate: nextPaymentDate || null,
-              status: "PENDING",
+
+              status: creditStatus,
+
               paymentHistory: [],
             },
           ],
@@ -89,9 +162,18 @@ exports.createSale = async (req, res) => {
         );
       }
 
+      // =========================
+      // SAVE SALE
+      // =========================
+
       await newSale.save({ session });
 
+      // =========================
+      // UPDATE STOCK
+      // =========================
+
       product.quantity -= Number(quantitySold);
+
       await product.save({ session });
 
       processedSalesIds.push(newSale._id);
@@ -100,26 +182,39 @@ exports.createSale = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
+    const newlyCreatedSales = await Sale.find({
+      _id: { $in: processedSalesIds },
+    })
       .populate("productId")
       .populate("soldBy", "fname")
       .lean()
       .sort({ createdAt: -1 });
 
-    res.status(201).json({ success: true, sales: newlyCreatedSales });
+    res.status(201).json({
+      success: true,
+      sales: newlyCreatedSales,
+    });
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
-    res.status(400).json({ message: error.message });
+
+    console.error("CREATE SALE ERROR:", error);
+
+    res.status(400).json({
+      message: error.message,
+    });
   }
 };
 
 exports.getSales = async (req, res) => {
   try {
     const businessId = req.user.businessId;
+
     let startDate = getDateFilter(req.query.range);
 
-    if (!(startDate instanceof Date)) startDate = new Date(startDate);
+    if (!(startDate instanceof Date)) {
+      startDate = new Date(startDate);
+    }
 
     const sales = await Sale.find({
       businessId,
@@ -127,13 +222,16 @@ exports.getSales = async (req, res) => {
     })
       .populate("productId")
       .populate("soldBy", "fname")
-      .lean() // Populate the user who sold the item
+      .lean()
       .sort({ date: -1 });
 
     res.json(sales);
   } catch (error) {
     console.error("GET SALES ERROR:", error);
-    res.status(500).json({ message: error.message });
+
+    res.status(500).json({
+      message: error.message,
+    });
   }
 };
 
@@ -141,22 +239,51 @@ exports.deleteSale = async (req, res) => {
   try {
     const businessId = req.user.businessId;
 
-    // 1. Verify ownership
-    const sale = await Sale.findOne({ _id: req.params.id, businessId });
-    if (!sale) return res.status(404).json({ message: "Sale not found" });
+    // VERIFY OWNERSHIP
+    const sale = await Sale.findOne({
+      _id: req.params.id,
+      businessId,
+    });
 
-    // 2. Restore stock only to the owner's product
+    if (!sale) {
+      return res.status(404).json({
+        message: "Sale not found",
+      });
+    }
+
+    // RESTORE STOCK
     await Product.findOneAndUpdate(
-      { _id: sale.productId, businessId },
-      { $inc: { quantity: sale.quantitySold } }
+      {
+        _id: sale.productId,
+        businessId,
+      },
+      {
+        $inc: {
+          quantity: sale.quantitySold,
+        },
+      }
     );
 
-    // 3. Delete sale record
-    await Sale.findOneAndDelete({ _id: req.params.id, businessId });
+    // DELETE CREDIT RECORD IF EXISTS
+    await Credit.findOneAndDelete({
+      saleId: sale._id,
+    });
 
-    res.json({ message: "Sale deleted and stock restored" });
+    // DELETE SALE
+    await Sale.findOneAndDelete({
+      _id: req.params.id,
+      businessId,
+    });
+
+    res.json({
+      message: "Sale deleted and stock restored",
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("DELETE SALE ERROR:", error);
+
+    res.status(500).json({
+      message: error.message,
+    });
   }
 };
 
@@ -164,9 +291,10 @@ exports.getSalesSummary = async (req, res) => {
   try {
     const businessId = req.user.businessId;
 
-    // Validate businessId early
     if (!mongoose.Types.ObjectId.isValid(businessId)) {
-      return res.status(400).json({ message: "Invalid Business ID" });
+      return res.status(400).json({
+        message: "Invalid Business ID",
+      });
     }
 
     const startDate = getDateFilter(req.query.range);
@@ -178,23 +306,37 @@ exports.getSalesSummary = async (req, res) => {
           date: { $gte: startDate },
         },
       },
+
       {
         $facet: {
           totals: [
             {
               $group: {
                 _id: null,
-                totalRevenue: { $sum: "$totalPrice" },
-                totalItemsSold: { $sum: "$quantitySold" },
-                totalTransactions: { $sum: 1 },
+
+                totalRevenue: {
+                  $sum: "$totalPrice",
+                },
+
+                totalItemsSold: {
+                  $sum: "$quantitySold",
+                },
+
+                totalTransactions: {
+                  $sum: 1,
+                },
               },
             },
           ],
+
           breakdown: [
             {
               $group: {
                 _id: "$paymentMethod",
-                amount: { $sum: "$totalPrice" },
+
+                amount: {
+                  $sum: "$totalPrice",
+                },
               },
             },
           ],
@@ -203,16 +345,25 @@ exports.getSalesSummary = async (req, res) => {
     ]);
 
     const inventoryStats = await Product.aggregate([
-      { $match: { businessId: new mongoose.Types.ObjectId(businessId) } },
+      {
+        $match: {
+          businessId: new mongoose.Types.ObjectId(businessId),
+        },
+      },
+
       {
         $group: {
           _id: null,
-          totalStockValue: { $sum: { $multiply: ["$price", "$quantity"] } },
+
+          totalStockValue: {
+            $sum: {
+              $multiply: ["$price", "$quantity"],
+            },
+          },
         },
       },
     ]);
 
-    // Safely extract stats
     const stats = salesStats[0]?.totals[0] || {
       totalRevenue: 0,
       totalItemsSold: 0,
@@ -220,19 +371,26 @@ exports.getSalesSummary = async (req, res) => {
     };
 
     const paymentBreakdown = {};
+
     salesStats[0]?.breakdown?.forEach((item) => {
-      if (item._id) paymentBreakdown[item._id] = item.amount;
+      if (item._id) {
+        paymentBreakdown[item._id] = item.amount;
+      }
     });
 
     res.json({
       totalRevenue: stats.totalRevenue || 0,
       totalItemsSold: stats.totalItemsSold || 0,
       totalTransactions: stats.totalTransactions || 0,
-      totalStockValue: inventoryStats[0]?.totalStockValue || 0,
+      totalStockValue:
+        inventoryStats[0]?.totalStockValue || 0,
       paymentBreakdown,
     });
   } catch (error) {
     console.error("DETAILED SUMMARY ERROR:", error);
-    res.status(500).json({ message: error.message });
+
+    res.status(500).json({
+      message: error.message,
+    });
   }
 };

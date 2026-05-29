@@ -1,4 +1,5 @@
 const Credit = require("../models/Credit");
+const Sale = require("../models/Sale");
 const mongoose = require("mongoose");
 
 exports.createCredit = async (req, res) => {
@@ -20,13 +21,16 @@ exports.createCredit = async (req, res) => {
 
 exports.getCredits = async (req, res) => {
   try {
-    // Populate product fields so frontend credit.productId?.name works out-of-the-box
     const credits = await Credit.find()
       .populate("productId")
       .sort({ createdAt: -1 });
+
     res.status(200).json(credits);
   } catch (error) {
-    res.status(500).json({ message: "Failed to fetch credits", error: error.message });
+    res.status(500).json({
+      message: "Failed to fetch credits",
+      error: error.message,
+    });
   }
 };
 
@@ -35,7 +39,9 @@ exports.getCreditById = async (req, res) => {
     const credit = await Credit.findById(req.params.id);
 
     if (!credit) {
-      return res.status(404).json({ message: "Credit not found" });
+      return res.status(404).json({
+        message: "Credit not found",
+      });
     }
 
     res.status(200).json(credit);
@@ -49,12 +55,18 @@ exports.getCreditById = async (req, res) => {
 
 exports.updateCredit = async (req, res) => {
   try {
-    const updated = await Credit.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
+    const updated = await Credit.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      {
+        new: true,
+      }
+    );
 
     if (!updated) {
-      return res.status(404).json({ message: "Credit not found" });
+      return res.status(404).json({
+        message: "Credit not found",
+      });
     }
 
     res.status(200).json(updated);
@@ -70,20 +82,38 @@ exports.addPayment = async (req, res) => {
   try {
     const { amount, nextPaymentDate, method } = req.body;
 
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ message: "Invalid payment amount" });
+    // =========================
+    // VALIDATE AMOUNT
+    // =========================
+
+    if (!amount || Number(amount) <= 0) {
+      return res.status(400).json({
+        message: "Invalid payment amount",
+      });
     }
+
+    // =========================
+    // FIND CREDIT
+    // =========================
 
     const credit = await Credit.findById(req.params.id);
 
     if (!credit) {
-      return res.status(404).json({ message: "Credit not found" });
+      return res.status(404).json({
+        message: "Credit not found",
+      });
     }
 
-    const total = credit.totalAmount || 0;
-    const currentPaid = credit.amountPaid || 0;
+    const total = Number(credit.totalAmount || 0);
+    const currentPaid = Number(credit.amountPaid || 0);
 
-    const newPaid = currentPaid + Number(amount);
+    const paymentAmount = Number(amount);
+
+    const newPaid = currentPaid + paymentAmount;
+
+    // =========================
+    // PREVENT OVERPAYMENT
+    // =========================
 
     if (newPaid > total) {
       return res.status(400).json({
@@ -91,32 +121,78 @@ exports.addPayment = async (req, res) => {
       });
     }
 
-    // ✅ update payment
+    // =========================
+    // UPDATE CREDIT
+    // =========================
+
     credit.amountPaid = newPaid;
 
-    // ✅ update balance (IMPORTANT)
     credit.balance = total - newPaid;
 
-    // ✅ update next payment date (THIS WAS MISSING)
     if (nextPaymentDate) {
       credit.nextPaymentDate = nextPaymentDate;
     }
 
-    // ✅ payment history (CRITICAL FOR TRACKING)
+    // =========================
+    // PAYMENT HISTORY
+    // =========================
+
     credit.paymentHistory.push({
-      amount: Number(amount),
+      amount: paymentAmount,
       method: method || "Cash",
       date: new Date(),
     });
 
-    // ✅ status update
-    credit.status =
-      newPaid >= total ? "CLEARED" : newPaid > 0 ? "PARTIAL" : "PENDING";
+    // =========================
+    // CREDIT STATUS
+    // =========================
+
+    if (credit.balance <= 0) {
+      credit.status = "PAID";
+    } else if (newPaid > 0) {
+      credit.status = "PARTIAL";
+    } else {
+      credit.status = "PENDING";
+    }
 
     await credit.save();
 
-    res.status(200).json(credit);
+    // =========================
+    // UPDATE SALE STATUS TOO
+    // =========================
+
+    const sale = await Sale.findById(credit.saleId);
+
+    if (sale) {
+      sale.balance = credit.balance;
+
+      if (credit.balance <= 0) {
+        sale.paymentStatus = "Paid";
+      } else if (newPaid > 0) {
+        sale.paymentStatus = "Partial";
+      } else {
+        sale.paymentStatus = "Pending";
+      }
+
+      await sale.save();
+    }
+
+    // =========================
+    // RESPONSE
+    // =========================
+
+    res.status(200).json({
+      success: true,
+      message:
+        credit.balance <= 0
+          ? "Credit fully cleared successfully"
+          : "Payment added successfully",
+
+      credit,
+    });
   } catch (error) {
+    console.error("ADD PAYMENT ERROR:", error);
+
     res.status(500).json({
       message: "Failed to add payment",
       error: error.message,
@@ -126,13 +202,19 @@ exports.addPayment = async (req, res) => {
 
 exports.deleteCredit = async (req, res) => {
   try {
-    const deleted = await Credit.findByIdAndDelete(req.params.id);
+    const deleted = await Credit.findByIdAndDelete(
+      req.params.id
+    );
 
     if (!deleted) {
-      return res.status(404).json({ message: "Credit not found" });
+      return res.status(404).json({
+        message: "Credit not found",
+      });
     }
 
-    res.status(200).json({ message: "Credit deleted successfully" });
+    res.status(200).json({
+      message: "Credit deleted successfully",
+    });
   } catch (error) {
     res.status(500).json({
       message: "Failed to delete credit",
