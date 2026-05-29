@@ -23,6 +23,7 @@ exports.getCredits = async (req, res) => {
   try {
     const credits = await Credit.find()
       .populate("productId")
+      .populate("saleId")
       .sort({ createdAt: -1 });
 
     res.status(200).json(credits);
@@ -83,10 +84,11 @@ exports.addPayment = async (req, res) => {
     const { amount, nextPaymentDate, method } = req.body;
 
     // =========================
-    // VALIDATE AMOUNT
+    // VALIDATE AMOUNT (STRICT)
     // =========================
+    const paymentAmount = Number(amount);
 
-    if (!amount || Number(amount) <= 0) {
+    if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
       return res.status(400).json({
         message: "Invalid payment amount",
       });
@@ -95,7 +97,6 @@ exports.addPayment = async (req, res) => {
     // =========================
     // FIND CREDIT
     // =========================
-
     const credit = await Credit.findById(req.params.id);
 
     if (!credit) {
@@ -104,17 +105,21 @@ exports.addPayment = async (req, res) => {
       });
     }
 
+    // =========================
+    // ENSURE SAFE DEFAULTS
+    // =========================
+    credit.paymentHistory = Array.isArray(credit.paymentHistory)
+      ? credit.paymentHistory
+      : [];
+
     const total = Number(credit.totalAmount || 0);
     const currentPaid = Number(credit.amountPaid || 0);
-
-    const paymentAmount = Number(amount);
 
     const newPaid = currentPaid + paymentAmount;
 
     // =========================
     // PREVENT OVERPAYMENT
     // =========================
-
     if (newPaid > total) {
       return res.status(400).json({
         message: "Payment exceeds remaining balance",
@@ -122,11 +127,9 @@ exports.addPayment = async (req, res) => {
     }
 
     // =========================
-    // UPDATE CREDIT
+    // UPDATE CREDIT VALUES
     // =========================
-
     credit.amountPaid = newPaid;
-
     credit.balance = total - newPaid;
 
     if (nextPaymentDate) {
@@ -134,9 +137,8 @@ exports.addPayment = async (req, res) => {
     }
 
     // =========================
-    // PAYMENT HISTORY
+    // PAYMENT HISTORY (SAFE PUSH)
     // =========================
-
     credit.paymentHistory.push({
       amount: paymentAmount,
       method: method || "Cash",
@@ -144,23 +146,19 @@ exports.addPayment = async (req, res) => {
     });
 
     // =========================
-    // CREDIT STATUS
+    // STATUS UPDATE (CLEAN LOGIC)
     // =========================
-
     if (credit.balance <= 0) {
       credit.status = "PAID";
-    } else if (newPaid > 0) {
-      credit.status = "PARTIAL";
     } else {
-      credit.status = "PENDING";
+      credit.status = "PARTIAL";
     }
 
     await credit.save();
 
     // =========================
-    // UPDATE SALE STATUS TOO
+    // UPDATE RELATED SALE
     // =========================
-
     const sale = await Sale.findById(credit.saleId);
 
     if (sale) {
@@ -168,10 +166,8 @@ exports.addPayment = async (req, res) => {
 
       if (credit.balance <= 0) {
         sale.paymentStatus = "Paid";
-      } else if (newPaid > 0) {
-        sale.paymentStatus = "Partial";
       } else {
-        sale.paymentStatus = "Pending";
+        sale.paymentStatus = "Partial";
       }
 
       await sale.save();
@@ -180,20 +176,18 @@ exports.addPayment = async (req, res) => {
     // =========================
     // RESPONSE
     // =========================
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message:
         credit.balance <= 0
           ? "Credit fully cleared successfully"
           : "Payment added successfully",
-
       credit,
     });
   } catch (error) {
     console.error("ADD PAYMENT ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to add payment",
       error: error.message,
     });
