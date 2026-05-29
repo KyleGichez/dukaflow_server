@@ -7,6 +7,7 @@ const authorize = require("../middleware/roleMiddleware");
 const {
   createCredit,
   getCredits,
+  getCreditPayments,
   getCreditById,
   updateCredit,
   addPayment,
@@ -17,6 +18,7 @@ router.use(auth);
 
 router.post("/", createCredit);
 router.get("/", getCredits);
+router.get("/", getCreditPayments);
 router.get("/:id", getCreditById);
 router.put("/:id", updateCredit);
 

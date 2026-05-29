@@ -216,3 +216,36 @@ exports.deleteCredit = async (req, res) => {
     });
   }
 };
+
+exports.getCreditPayments = async (req, res) => {
+  try {
+    const { range } = req.query;
+    let startDate = new Date();
+    startDate.setHours(0, 0, 0, 0); // Default to start of today
+
+    const now = new Date();
+
+    // Handle range filtering conditions mirroring your sales engine
+    if (range === "this-week") {
+      const day = startDate.getDay();
+      const diff = startDate.getDate() - day + (day === 0 ? -6 : 1); // Adjust to get Monday
+      startDate = new Date(startDate.setDate(diff));
+    } else if (range === "this-month") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (range === "all-time") {
+      startDate = new Date(0); // Epoch time (returns everything)
+    }
+    // "today" keeps the default start of today
+
+    // Fetch records where payment date is greater than or equal to the filtered start date
+    // If your application tracks user-specific data, add a shop/user filter here: { shopId: req.user.shopId }
+    const payments = await CreditPayment.find({
+      date: { $gte: startDate, $lte: now }
+    }).populate("customerId", "name"); // Optional styling populate
+
+    res.status(200).json(payments);
+  } catch (error) {
+    console.error("Error in getCreditPayments backend:", error);
+    res.status(500).json({ message: "Server error fetching repayments history", error: error.message });
+  }
+};
