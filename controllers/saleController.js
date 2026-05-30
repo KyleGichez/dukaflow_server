@@ -30,7 +30,7 @@ exports.createSale = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { items, paymentMethod, date } = req.body;
+    const {paymentMethod, date, customerName, customerPhone, amountPaid, nextPaymentDate } = req.body;
     const businessId = req.user.businessId; 
     const userId = req.user?.id || req.user?._id;
 
@@ -43,7 +43,7 @@ exports.createSale = async (req, res) => {
     for (const item of items) {
       const { productId, quantitySold } = item;
 
-      // 1. Find product ensuring it belongs to this specific business workspace
+      // 1. Find product ensuring it belongs to this business workspace
       const product = await Product.findOne({ _id: productId, businessId }).session(session);
       if (!product) {
         throw new Error(`Product with ID ${productId} was not found in your workspace.`);
@@ -57,21 +57,50 @@ exports.createSale = async (req, res) => {
       // 3. Calculate Item Total Price
       const totalPrice = product.price * Number(quantitySold);
 
-      // 4. Instantiate separate item sale record line
+      // Determine payment statuses and balances if it's a credit sale
+      let assignedStatus = "Paid";
+      let initialBalance = 0;
+
+      if (paymentMethod === "Credit") {
+        const parsedPaid = Number(amountPaid || 0);
+        initialBalance = totalPrice - parsedPaid;
+        assignedStatus = initialBalance <= 0 ? "Paid" : parsedPaid > 0 ? "Partial" : "Pending";
+      }
+
+      // 4. Instantiate item sale record line
       const newSale = new Sale({
         productId,
         quantitySold: Number(quantitySold),
         unitPrice: product.price,
         totalPrice,
         paymentMethod,
+        paymentStatus: assignedStatus,
+        balance: initialBalance,
         date: date || new Date(),
         businessId,
-        soldBy: userId // Track who recorded the receipt
+        soldBy: userId 
       });
 
       await newSale.save({ session });
 
-      // 5. Deduct inventory item stock 
+      // 5. If it is a credit purchase, generate corresponding Credit Ledger row tracking document
+      if (paymentMethod === "Credit") {
+        await Credit.create([{
+          productId,
+          saleId: newSale._id,
+          customerName,
+          customerPhone,
+          totalAmount: totalPrice,
+          amountPaid: Number(amountPaid || 0),
+          balance: initialBalance,
+          status: assignedStatus === "Paid" ? "PAID" : assignedStatus === "Partial" ? "PARTIAL" : "PENDING",
+          nextPaymentDate: nextPaymentDate || null,
+          businessId,
+          createdAt: new Date()
+        }], { session });
+      }
+
+      // 6. Deduct inventory item stock 
       product.quantity -= Number(quantitySold);
       await product.save({ session });
 
@@ -83,15 +112,16 @@ exports.createSale = async (req, res) => {
 
     const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
-      .populate("soldBy", "fname").lean()
+      .populate("soldBy", "fname")
+      .lean()
       .sort({ createdAt: -1 });
 
     res.status(201).json({ success: true, sales: newlyCreatedSales });
 
   } catch (error) {
-
     await session.abortTransaction();
     session.endSession();
+    console.error("CREATE SALE TRANSACTION ERROR:", error);
     res.status(400).json({ message: error.message });
   }
 };
