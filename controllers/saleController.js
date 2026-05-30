@@ -1,4 +1,5 @@
 const Sale = require("../models/Sale");
+const Credit = require("../models/Credit");
 const Product = require("../models/Product");
 const mongoose = require("mongoose");
 
@@ -112,7 +113,7 @@ exports.createSale = async (req, res) => {
 
     const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
       .populate("productId")
-      .populate("soldBy", "fname")
+      .populate("soldBy", "fname role")
       .lean()
       .sort({ createdAt: -1 });
 
