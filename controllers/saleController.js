@@ -131,26 +131,28 @@ exports.createSale = async (req, res) => {
           creditStatus = "PARTIAL";
         }
 
-        // Fix: Pass an object directly instead of an array wrapped element if handled cleanly, 
-        // or ensure array options include session execution configuration accurately.
-        await Credit.create(
-          [
-            {
-              saleId: newSale._id,
-              productId,
-              quantitySold: Number(quantitySold),
-              customerName: customerName?.trim() || "Walking Client",
-              customerPhone: customerPhone?.trim() || "N/A",
-              totalAmount: totalPrice,
-              amountPaid: amountPaid, 
-              balance: calculatedBalance,
-              nextPaymentDate: nextPaymentDate || null,
-              status: creditStatus,
-              paymentHistory: [],
-            },
-          ],
-          { session }
+        const totalAmount = items.reduce(
+          (sum, item) => sum + item.totalPrice,
+          0
         );
+        
+        const paid = Number(amountPaid || 0);
+        const balance = totalAmount - paid;
+        
+        await Credit.create({
+          saleId: newSale._id,
+          customerName,
+          customerPhone,
+          totalAmount,
+          amountPaid: paid,
+          balance,
+          status: balance <= 0 ? "PAID" : "PARTIAL",
+          paymentHistory: paid > 0 ? [{
+            amount: paid,
+            method: paymentMethod,
+            date: new Date(),
+          }] : [],
+        });
       }
 
       // =========================
