@@ -30,7 +30,7 @@ exports.createSale = async (req, res) => {
   session.startTransaction();
 
   try {
-    const {paymentMethod, date, customerName, customerPhone, amountPaid, nextPaymentDate } = req.body;
+    const {items, paymentMethod, date, customerName, customerPhone, amountPaid, nextPaymentDate } = req.body;
     const businessId = req.user.businessId; 
     const userId = req.user?.id || req.user?._id;
 
