@@ -56,13 +56,9 @@ exports.getCreditById = async (req, res) => {
 
 exports.updateCredit = async (req, res) => {
   try {
-    const updated = await Credit.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      {
-        new: true,
-      }
-    );
+    const updated = await Credit.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
 
     if (!updated) {
       return res.status(404).json({
@@ -157,20 +153,61 @@ exports.addPayment = async (req, res) => {
     await credit.save();
 
     // =========================
-    // UPDATE RELATED SALE
+    // UPDATE RELATED SALES
     // =========================
+
+    // Update current sale first
     const sale = await Sale.findById(credit.saleId);
 
     if (sale) {
       sale.balance = credit.balance;
+      sale.paymentStatus = credit.balance <= 0 ? "Paid" : "Partial";
+      await sale.save();
+    }
 
-      if (credit.balance <= 0) {
-        sale.paymentStatus = "Paid";
-      } else {
-        sale.paymentStatus = "Partial";
+    // Check if ALL debts for this customer are now cleared
+    const remainingCredits = await Credit.find({
+      customerName: credit.customerName,
+      customerPhone: credit.customerPhone,
+      balance: { $gt: 0 },
+    });
+
+    const customerFullyCleared = remainingCredits.length === 0;
+
+    if (customerFullyCleared) {
+      const customerCredits = await Credit.find({
+        customerName: credit.customerName,
+        customerPhone: credit.customerPhone,
+      });
+
+      const saleIds = customerCredits.map((c) => c.saleId).filter(Boolean);
+
+      if (saleIds.length > 0) {
+        await Sale.updateMany(
+          {
+            _id: { $in: saleIds },
+          },
+          {
+            $set: {
+              paymentStatus: "Paid",
+              balance: 0,
+            },
+          }
+        );
       }
 
-      await sale.save();
+      await Credit.updateMany(
+        {
+          customerName: credit.customerName,
+          customerPhone: credit.customerPhone,
+        },
+        {
+          $set: {
+            status: "PAID",
+            balance: 0,
+          },
+        }
+      );
     }
 
     // =========================
@@ -196,9 +233,7 @@ exports.addPayment = async (req, res) => {
 
 exports.deleteCredit = async (req, res) => {
   try {
-    const deleted = await Credit.findByIdAndDelete(
-      req.params.id
-    );
+    const deleted = await Credit.findByIdAndDelete(req.params.id);
 
     if (!deleted) {
       return res.status(404).json({
@@ -240,12 +275,17 @@ exports.getCreditPayments = async (req, res) => {
     // Fetch records where payment date is greater than or equal to the filtered start date
     // If your application tracks user-specific data, add a shop/user filter here: { shopId: req.user.shopId }
     const payments = await CreditPayment.find({
-      date: { $gte: startDate, $lte: now }
+      date: { $gte: startDate, $lte: now },
     }).populate("customerId", "name"); // Optional styling populate
 
     res.status(200).json(payments);
   } catch (error) {
     console.error("Error in getCreditPayments backend:", error);
-    res.status(500).json({ message: "Server error fetching repayments history", error: error.message });
+    res
+      .status(500)
+      .json({
+        message: "Server error fetching repayments history",
+        error: error.message,
+      });
   }
 };

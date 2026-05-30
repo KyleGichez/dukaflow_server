@@ -23,6 +23,11 @@ const saleSchema = new mongoose.Schema(
       required: true,
     },
     createdAt: { type: Date, default: Date.now },
+    paymentStatus: {
+      type: String,
+      enum: ["Paid", "Pending", "Partial"],
+      default: "Paid",
+    },
   },
   { timestamps: true }
 );
