@@ -47,38 +47,35 @@ exports.createSale = async (req, res) => {
     const businessId = req.user.businessId;
     const userId = req.user?.id || req.user?._id;
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        message: "Your customer shopping basket is empty",
-      });
+    if (!items?.length) {
+      throw new Error("Your customer shopping basket is empty");
     }
 
-    const processedSalesIds = [];
-
-    const enrichedItems = [];
-
+    let enrichedItems = [];
     let totalAmount = 0;
 
+    // =========================
+    // 1. VALIDATE FIRST (NO STOCK UPDATE YET)
+    // =========================
     for (const item of items) {
       const product = await Product.findOne({
         _id: item.productId,
         businessId,
       }).session(session);
 
-      product.quantity -= Number(item.quantitySold);
-      await product.save({ session });
-
       if (!product) throw new Error("Product not found");
 
-      if (product.quantity < Number(item.quantitySold)) {
+      const qty = Number(item.quantitySold);
+
+      if (product.quantity < qty) {
         throw new Error(`Insufficient stock for ${product.name}`);
       }
 
-      const itemTotal = product.price * Number(item.quantitySold);
+      const itemTotal = product.price * qty;
 
       enrichedItems.push({
         productId: item.productId,
-        quantitySold: Number(item.quantitySold),
+        quantitySold: qty,
         unitPrice: product.price,
         totalPrice: itemTotal,
       });
@@ -86,71 +83,88 @@ exports.createSale = async (req, res) => {
       totalAmount += itemTotal;
     }
 
-    const paid = Number(amountPaid || 0);
+    // =========================
+    // 2. PAYMENT LOGIC
+    // =========================
+    const paid = Number(amountPaid);
     const balance = totalAmount - paid;
 
-    let paymentStatus;
-
+    let paymentStatus = "Pending";
     if (balance <= 0) paymentStatus = "Paid";
     else if (paid > 0) paymentStatus = "Partial";
-    else paymentStatus = "Pending";
 
-    const newSale = new Sale({
-      items: enrichedItems,
-      totalPrice: totalAmount,
-      paymentMethod,
-      paymentStatus,
-      amountPaid: paid,
-      balance,
-      date: date || new Date(),
-      businessId,
-      soldBy: userId,
-    });
+    // =========================
+    // 3. CREATE SALE
+    // =========================
+    const sale = await Sale.create(
+      [
+        {
+          items: enrichedItems,
+          totalPrice: totalAmount,
+          paymentMethod,
+          paymentStatus,
+          amountPaid: paid,
+          balance,
+          date: date || new Date(),
+          businessId,
+          soldBy: userId,
+        },
+      ],
+      { session }
+    );
 
-    await newSale.save({ session });
+    const saleDoc = sale[0];
 
-    processedSalesIds.push(newSale._id);
+    // =========================
+    // 4. UPDATE STOCK SAFELY
+    // =========================
+    for (const item of enrichedItems) {
+      await Product.findOneAndUpdate(
+        {
+          _id: item.productId,
+          businessId,
+        },
+        {
+          $inc: { quantity: -item.quantitySold },
+        },
+        { session }
+      );
+    }
 
+    // =========================
+    // 5. CREDIT RECORD
+    // =========================
     if (paymentMethod === "Credit") {
       await Credit.create({
-        saleId: newSale._id,
+        saleId: saleDoc._id,
         customerName,
         customerPhone,
         totalAmount,
         amountPaid: paid,
         balance,
         status: paymentStatus.toUpperCase(),
-        paymentHistory: paid > 0 ? [{
-          amount: paid,
-          method: paymentMethod,
-          date: new Date(),
-        }] : [],
+        paymentHistory: paid
+          ? [{ amount: paid, method: paymentMethod, date: new Date() }]
+          : [],
       });
     }
 
     await session.commitTransaction();
     session.endSession();
 
-    const newlyCreatedSales = await Sale.find({
-      _id: { $in: processedSalesIds },
-    })
-      .populate("productId")
-      .populate("soldBy", "fname")
-      .lean()
-      .sort({ createdAt: -1 });
+    const finalSale = await Sale.findById(saleDoc._id)
+      .populate("items.productId")
+      .populate("soldBy", "fname");
 
     res.status(201).json({
       success: true,
-      sales: newlyCreatedSales,
+      sale: finalSale,
     });
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
 
-    console.error("CREATE SALE ERROR:", error);
-    res.status(400).json({
-      message: error.message,
-    });
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -168,7 +182,7 @@ exports.getSales = async (req, res) => {
       businessId,
       date: { $gte: startDate },
     })
-      .populate("productId")
+      .populate("items.productId")
       .populate("soldBy", "fname")
       .lean()
       .sort({ date: -1 });
@@ -187,51 +201,39 @@ exports.deleteSale = async (req, res) => {
   try {
     const businessId = req.user.businessId;
 
-    // VERIFY OWNERSHIP
     const sale = await Sale.findOne({
       _id: req.params.id,
       businessId,
     });
 
     if (!sale) {
-      return res.status(404).json({
-        message: "Sale not found",
-      });
+      return res.status(404).json({ message: "Sale not found" });
     }
 
-    // RESTORE STOCK
-    await Product.findOneAndUpdate(
-      {
-        _id: sale.productId,
-        businessId,
-      },
-      {
-        $inc: {
-          quantity: sale.quantitySold,
+    // =========================
+    // RESTORE STOCK PROPERLY
+    // =========================
+    for (const item of sale.items) {
+      await Product.findOneAndUpdate(
+        {
+          _id: item.productId,
+          businessId,
         },
-      }
-    );
+        {
+          $inc: { quantity: item.quantitySold },
+        }
+      );
+    }
 
-    // DELETE CREDIT RECORD IF EXISTS
-    await Credit.findOneAndDelete({
-      saleId: sale._id,
-    });
+    await Credit.findOneAndDelete({ saleId: sale._id });
 
-    // DELETE SALE
-    await Sale.findOneAndDelete({
-      _id: req.params.id,
-      businessId,
-    });
+    await Sale.findByIdAndDelete(sale._id);
 
     res.json({
       message: "Sale deleted and stock restored",
     });
   } catch (error) {
-    console.error("DELETE SALE ERROR:", error);
-
-    res.status(500).json({
-      message: error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };
 
