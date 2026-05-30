@@ -37,8 +37,7 @@ exports.createSale = async (req, res) => {
     date,
     customerName,
     customerPhone,
-    nextPaymentDate,
-    balance, // Explicit remaining balance if partial payment was given during checkout
+    amountPaid = 0,
   } = req.body;
 
   const session = await mongoose.startSession();
@@ -56,112 +55,77 @@ exports.createSale = async (req, res) => {
 
     const processedSalesIds = [];
 
-    for (const item of items) {
-      const { productId, quantitySold } = item;
+    const enrichedItems = [];
 
+    let totalAmount = 0;
+
+    for (const item of items) {
       const product = await Product.findOne({
-        _id: productId,
+        _id: item.productId,
         businessId,
       }).session(session);
 
-      if (!product) {
-        throw new Error(
-          `Product with ID ${productId} was not found in your workspace.`
-        );
-      }
-
-      if (product.quantity < Number(quantitySold)) {
-        throw new Error(
-          `Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`
-        );
-      }
-
-      const totalPrice = product.price * Number(quantitySold);
-
-      // =========================
-      // EQUALIZED PAYMENT MATH
-      // =========================
-      let paymentStatus = "Paid";
-      let calculatedBalance = 0;
-      let amountPaid = totalPrice;
-
-      if (paymentMethod === "Credit") {
-        // If balance isn't provided, it means 0 was paid upfront, so full totalPrice is owed
-        calculatedBalance = balance !== undefined && balance !== null ? Number(balance) : totalPrice;
-        amountPaid = totalPrice - calculatedBalance;
-
-        if (calculatedBalance <= 0) {
-          paymentStatus = "Paid";
-        } else if (amountPaid > 0) {
-          paymentStatus = "Partial";
-        } else {
-          paymentStatus = "Pending";
-        }
-      }
-
-      // =========================
-      // CREATE SALE
-      // =========================
-      const newSale = new Sale({
-        productId,
-        quantitySold: Number(quantitySold),
-        unitPrice: product.price,
-        totalPrice,
-        paymentMethod,
-        paymentStatus,
-        date: date || new Date(),
-        businessId,
-        soldBy: userId,
-        balance: calculatedBalance,
-        nextPaymentDate,
-      });
-
-      // Save sale item within active transaction context
-      await newSale.save({ session });
-
-      // =========================
-      // CREATE CREDIT RECORD
-      // =========================
-      if (paymentMethod === "Credit") {
-        let creditStatus = "PENDING";
-
-        if (calculatedBalance <= 0) {
-          creditStatus = "PAID";
-        } else if (amountPaid > 0) {
-          creditStatus = "PARTIAL";
-        }
-
-        const totalAmount = items.reduce(
-          (sum, item) => sum + item.totalPrice,
-          0
-        );
-        
-        const paid = Number(amountPaid || 0);
-        const balance = totalAmount - paid;
-        
-        await Credit.create({
-          saleId: newSale._id,
-          customerName,
-          customerPhone,
-          totalAmount,
-          amountPaid: paid,
-          balance,
-          status: balance <= 0 ? "PAID" : "PARTIAL",
-          paymentHistory: paid > 0 ? [{
-            amount: paid,
-            method: paymentMethod,
-            date: new Date(),
-          }] : [],
-        });
-      }
-
-      // =========================
-      // UPDATE STOCK
-      // =========================
-      product.quantity -= Number(quantitySold);
+      product.quantity -= Number(item.quantitySold);
       await product.save({ session });
 
-      processedSalesIds.push(newSale._id);
+      if (!product) throw new Error("Product not found");
+
+      if (product.quantity < Number(item.quantitySold)) {
+        throw new Error(`Insufficient stock for ${product.name}`);
+      }
+
+      const itemTotal = product.price * Number(item.quantitySold);
+
+      enrichedItems.push({
+        productId: item.productId,
+        quantitySold: Number(item.quantitySold),
+        unitPrice: product.price,
+        totalPrice: itemTotal,
+      });
+
+      totalAmount += itemTotal;
+    }
+
+    const paid = Number(amountPaid || 0);
+    const balance = totalAmount - paid;
+
+    let paymentStatus;
+
+    if (balance <= 0) paymentStatus = "Paid";
+    else if (paid > 0) paymentStatus = "Partial";
+    else paymentStatus = "Pending";
+
+    const newSale = new Sale({
+      items: enrichedItems,
+      totalPrice: totalAmount,
+      paymentMethod,
+      paymentStatus,
+      amountPaid: paid,
+      balance,
+      date: date || new Date(),
+      businessId,
+      soldBy: userId,
+    });
+
+    await newSale.save({ session });
+
+    processedSalesIds.push(newSale._id);
+
+    if (paymentMethod === "Credit") {
+      await Credit.create({
+        saleId: newSale._id,
+        customerName,
+        customerPhone,
+        totalAmount,
+        amountPaid: paid,
+        balance,
+        status: paymentStatus.toUpperCase(),
+        paymentHistory: paid > 0 ? [{
+          amount: paid,
+          method: paymentMethod,
+          date: new Date(),
+        }] : [],
+      });
     }
 
     await session.commitTransaction();
@@ -366,8 +330,7 @@ exports.getSalesSummary = async (req, res) => {
       totalRevenue: stats.totalRevenue || 0,
       totalItemsSold: stats.totalItemsSold || 0,
       totalTransactions: stats.totalTransactions || 0,
-      totalStockValue:
-        inventoryStats[0]?.totalStockValue || 0,
+      totalStockValue: inventoryStats[0]?.totalStockValue || 0,
       paymentBreakdown,
     });
   } catch (error) {
