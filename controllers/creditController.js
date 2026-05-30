@@ -6,6 +6,7 @@ exports.createCredit = async (req, res) => {
   try {
     const credit = await Credit.create({
       ...req.body,
+      businessId: req.user.businessId,
       amountPaid: req.body.amountPaid || 0,
       createdAt: new Date(),
     });
