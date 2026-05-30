@@ -31,12 +31,22 @@ exports.createSale = async (req, res) => {
   session.startTransaction();
 
   try {
-    const {items, paymentMethod, date, customerName, customerPhone, amountPaid, nextPaymentDate } = req.body;
-    const businessId = req.user.businessId; 
+    const {
+      items,
+      paymentMethod,
+      date,
+      customerName,
+      customerPhone,
+      amountPaid,
+      nextPaymentDate,
+    } = req.body;
+    const businessId = req.user.businessId;
     const userId = req.user?.id || req.user?._id;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "Your customer shopping basket is empty" });
+      return res
+        .status(400)
+        .json({ message: "Your customer shopping basket is empty" });
     }
 
     const processedSalesIds = [];
@@ -45,14 +55,21 @@ exports.createSale = async (req, res) => {
       const { productId, quantitySold } = item;
 
       // 1. Find product ensuring it belongs to this business workspace
-      const product = await Product.findOne({ _id: productId, businessId }).session(session);
+      const product = await Product.findOne({
+        _id: productId,
+        businessId,
+      }).session(session);
       if (!product) {
-        throw new Error(`Product with ID ${productId} was not found in your workspace.`);
+        throw new Error(
+          `Product with ID ${productId} was not found in your workspace.`
+        );
       }
 
       // 2. Check stock levels
       if (product.quantity < Number(quantitySold)) {
-        throw new Error(`Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`);
+        throw new Error(
+          `Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`
+        );
       }
 
       // 3. Calculate Item Total Price
@@ -65,7 +82,8 @@ exports.createSale = async (req, res) => {
       if (paymentMethod === "Credit") {
         const parsedPaid = Number(amountPaid || 0);
         initialBalance = totalPrice - parsedPaid;
-        assignedStatus = initialBalance <= 0 ? "Paid" : parsedPaid > 0 ? "Partial" : "Pending";
+        assignedStatus =
+          initialBalance <= 0 ? "Paid" : parsedPaid > 0 ? "Partial" : "Pending";
       }
 
       // 4. Instantiate item sale record line
@@ -79,29 +97,40 @@ exports.createSale = async (req, res) => {
         balance: initialBalance,
         date: date || new Date(),
         businessId,
-        soldBy: userId 
+        soldBy: userId,
       });
 
       await newSale.save({ session });
 
       // 5. If it is a credit purchase, generate corresponding Credit Ledger row tracking document
       if (paymentMethod === "Credit") {
-        await Credit.create([{
-          productId,
-          saleId: newSale._id,
-          customerName,
-          customerPhone,
-          totalAmount: totalPrice,
-          amountPaid: Number(amountPaid || 0),
-          balance: initialBalance,
-          status: assignedStatus === "Paid" ? "PAID" : assignedStatus === "Partial" ? "PARTIAL" : "PENDING",
-          nextPaymentDate: nextPaymentDate || null,
-          businessId,
-          createdAt: new Date()
-        }], { session });
+        await Credit.create(
+          [
+            {
+              productId,
+              saleId: newSale._id,
+              businessId,
+              customerName,
+              customerPhone,
+              totalAmount: totalPrice,
+              amountPaid: Number(amountPaid || 0),
+              balance: initialBalance,
+              status:
+                assignedStatus === "Paid"
+                  ? "PAID"
+                  : assignedStatus === "Partial"
+                  ? "PARTIAL"
+                  : "PENDING",
+              nextPaymentDate: nextPaymentDate || null,
+              businessId,
+              createdAt: new Date(),
+            },
+          ],
+          { session }
+        );
       }
 
-      // 6. Deduct inventory item stock 
+      // 6. Deduct inventory item stock
       product.quantity -= Number(quantitySold);
       await product.save({ session });
 
@@ -111,14 +140,15 @@ exports.createSale = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    const newlyCreatedSales = await Sale.find({ _id: { $in: processedSalesIds } })
+    const newlyCreatedSales = await Sale.find({
+      _id: { $in: processedSalesIds },
+    })
       .populate("productId")
       .populate("soldBy", "fname role")
       .lean()
       .sort({ createdAt: -1 });
 
     res.status(201).json({ success: true, sales: newlyCreatedSales });
-
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
@@ -131,17 +161,18 @@ exports.getSales = async (req, res) => {
   try {
     const businessId = req.user.businessId;
     let startDate = getDateFilter(req.query.range);
-    
+
     if (!(startDate instanceof Date)) startDate = new Date(startDate);
 
-    const sales = await Sale.find({ 
-        businessId, 
-        date: { $gte: startDate } 
-      })
+    const sales = await Sale.find({
+      businessId,
+      date: { $gte: startDate },
+    })
       .populate("productId")
-      .populate("soldBy", "fname").lean() // Populate the user who sold the item
+      .populate("soldBy", "fname role")
+      .lean() // Populate the user who sold the item
       .sort({ date: -1 });
-      
+
     res.json(sales);
   } catch (error) {
     console.error("GET SALES ERROR:", error);
@@ -159,7 +190,7 @@ exports.deleteSale = async (req, res) => {
 
     // 2. Restore stock only to the owner's product
     await Product.findOneAndUpdate(
-      { _id: sale.productId, businessId }, 
+      { _id: sale.productId, businessId },
       { $inc: { quantity: sale.quantitySold } }
     );
 
@@ -175,60 +206,92 @@ exports.deleteSale = async (req, res) => {
 exports.getSalesSummary = async (req, res) => {
   try {
     const businessId = req.user.businessId;
-    
+
     // Validate businessId early
     if (!mongoose.Types.ObjectId.isValid(businessId)) {
-       return res.status(400).json({ message: "Invalid Business ID" });
+      return res.status(400).json({ message: "Invalid Business ID" });
     }
 
     const startDate = getDateFilter(req.query.range);
 
+    // Last 7 days calculations
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const last7DaysSales = await Sale.find({
+      businessId,
+      date: { $gte: sevenDaysAgo },
+    });
+
+    const creditRecords = await Credit.find({
+      businessId,
+    });
+
+    const revenue7Days = last7DaysSales.reduce(
+      (sum, sale) => sum + Number(sale.totalPrice || 0),
+      0
+    );
+
+    const outstandingCredits = creditRecords.reduce(
+      (sum, credit) => sum + Number(credit.balance || 0),
+      0
+    );
+
+    // Profit = Revenue - unpaid credits
+    const profit7Days = revenue7Days - outstandingCredits;
+
+    const avgDailyProfit = profit7Days / 7;
+
     const salesStats = await Sale.aggregate([
-      { 
-        $match: { 
-          businessId: new mongoose.Types.ObjectId(businessId), 
-          date: { $gte: startDate } 
-        } 
-      }, 
+      {
+        $match: {
+          businessId: new mongoose.Types.ObjectId(businessId),
+          date: { $gte: startDate },
+        },
+      },
       {
         $facet: {
-          "totals": [
+          totals: [
             {
               $group: {
                 _id: null,
                 totalRevenue: { $sum: "$totalPrice" },
                 totalItemsSold: { $sum: "$quantitySold" },
-                totalTransactions: { $sum: 1 }
-              }
-            }
+                totalTransactions: { $sum: 1 },
+              },
+            },
           ],
-          "breakdown": [
+          breakdown: [
             {
               $group: {
                 _id: "$paymentMethod",
-                amount: { $sum: "$totalPrice" }
-              }
-            }
-          ]
-        }
-      }
+                amount: { $sum: "$totalPrice" },
+              },
+            },
+          ],
+        },
+      },
     ]);
 
     const inventoryStats = await Product.aggregate([
-      { $match: { businessId: new mongoose.Types.ObjectId(businessId) } }, 
-      { 
-        $group: { 
-          _id: null, 
-          totalStockValue: { $sum: { $multiply: ["$price", "$quantity"] } } 
-        } 
-      }
+      { $match: { businessId: new mongoose.Types.ObjectId(businessId) } },
+      {
+        $group: {
+          _id: null,
+          totalStockValue: { $sum: { $multiply: ["$price", "$quantity"] } },
+        },
+      },
     ]);
 
     // Safely extract stats
-    const stats = salesStats[0]?.totals[0] || { totalRevenue: 0, totalItemsSold: 0, totalTransactions: 0 };
-    
+    const stats = salesStats[0]?.totals[0] || {
+      totalRevenue: 0,
+      totalItemsSold: 0,
+      totalTransactions: 0,
+    };
+
     const paymentBreakdown = {};
-    salesStats[0]?.breakdown?.forEach(item => {
+    salesStats[0]?.breakdown?.forEach((item) => {
       if (item._id) paymentBreakdown[item._id] = item.amount;
     });
 
@@ -237,9 +300,11 @@ exports.getSalesSummary = async (req, res) => {
       totalItemsSold: stats.totalItemsSold || 0,
       totalTransactions: stats.totalTransactions || 0,
       totalStockValue: inventoryStats[0]?.totalStockValue || 0,
-      paymentBreakdown
+      profit7Days: profit7Days || 0,
+      avgDailyProfit: Math.round(avgDailyProfit || 0),
+      activeCredits: outstandingCredits || 0,
+      paymentBreakdown,
     });
-
   } catch (error) {
     console.error("DETAILED SUMMARY ERROR:", error);
     res.status(500).json({ message: error.message });

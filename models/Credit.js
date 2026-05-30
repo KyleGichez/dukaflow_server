@@ -29,6 +29,11 @@ const creditSchema = new mongoose.Schema(
         method: String,
       },
     ],
+    businessId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Business",
+      required: true,
+    },
   },
   { timestamps: true }
 );
