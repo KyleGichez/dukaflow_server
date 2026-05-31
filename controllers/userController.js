@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Business = require("../models/Business");
+const Sale = require("../models/Sale");
 const Subscription = require("../models/Subscription");
 const bcrypt = require("bcryptjs");
 
@@ -74,6 +75,54 @@ exports.getStaff = async (req, res) => {
     console.error(error);
     res.status(500).json({
       message: "Failed to fetch staff",
+    });
+  }
+};
+
+exports.updateStaffRole = async (req, res) => {
+  try {
+    const { role } = req.body;
+
+    const allowedRoles = ["admin", "manager", "cashier"];
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({
+        message: "Invalid role selected",
+      });
+    }
+    
+
+    const staff = await User.findById(req.params.id);
+
+    if (
+      req.user._id.toString() || req.user.id.toString() === req.params.id &&
+      role !== "admin"
+    ) {
+      return res.status(400).json({
+        message: "You cannot remove your own admin privileges",
+      });
+    }
+
+    if (!staff) {
+      return res.status(404).json({
+        message: "Staff member not found",
+      });
+    }
+
+    staff.role = role;
+
+    await staff.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Role updated successfully",
+      staff,
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      message: "Failed to update role",
     });
   }
 };

@@ -29,6 +29,7 @@ app.use("/api/credits/payments", require("./routes/creditRoutes"));
 app.use("/api/stock", require("./routes/stockRoutes"));
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use("/api/staff", require('./routes/staffRoutes'));
+app.use("/api/staff/roles", require('./routes/staffRoutes'));
 app.use("/api/payments",require('./routes/paymentRoutes'));
 app.use("/api/admin/dashboard",require('./routes/dashboardRoutes'));
 app.use("/api/admin/business",require('./routes/businessRoutes'));
