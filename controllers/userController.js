@@ -45,10 +45,36 @@ exports.getStaff = async (req, res) => {
       role: { $ne: "superadmin" }, // optional safety
     }).select("-Password");
 
-    res.json(staff);
+    const staffWithStats = await Promise.all(
+      staff.map(async (member) => {
+        const sales = await Sale.find({
+          soldBy: member._id,
+        });
 
+        const totalSales = sales.reduce(
+          (sum, sale) => sum + Number(sale.totalPrice || 0),
+          0
+        );
+
+        const itemsSold = sales.reduce(
+          (sum, sale) => sum + Number(sale.quantitySold || 0),
+          0
+        );
+
+        return {
+          ...member.toObject(),
+          totalSales,
+          itemsSold,
+        };
+      })
+    );
+
+    res.json(staffWithStats);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({
+      message: "Failed to fetch staff",
+    });
   }
 };
 
