@@ -6,7 +6,7 @@ exports.createCredit = async (req, res) => {
   try {
     const credit = await Credit.create({
       ...req.body,
-      businessId: req.user.businessId,
+      businessId: req.user.businessId, 
       amountPaid: req.body.amountPaid || 0,
       createdAt: new Date(),
     });
@@ -22,7 +22,17 @@ exports.createCredit = async (req, res) => {
 
 exports.getCredits = async (req, res) => {
   try {
-    const credits = await Credit.find()
+    const query = { businessId: req.user.businessId };
+
+    if (req.query.customerName) {
+      query.customerName = req.query.customerName;
+    }
+    
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
+
+    const credits = await Credit.find(query)
       .populate("productId")
       .populate("saleId")
       .sort({ createdAt: -1 });
@@ -30,7 +40,7 @@ exports.getCredits = async (req, res) => {
     res.status(200).json(credits);
   } catch (error) {
     res.status(500).json({
-      message: "Failed to fetch credits",
+      message: "Failed to fetch credits for this business",
       error: error.message,
     });
   }
@@ -38,11 +48,15 @@ exports.getCredits = async (req, res) => {
 
 exports.getCreditById = async (req, res) => {
   try {
-    const credit = await Credit.findById(req.params.id);
+    // Find by ID AND ensure it belongs to the requesting business
+    const credit = await Credit.findOne({
+      _id: req.params.id,
+      businessId: req.user.businessId,
+    });
 
     if (!credit) {
       return res.status(404).json({
-        message: "Credit not found",
+        message: "Credit record not found or unauthorized",
       });
     }
 
