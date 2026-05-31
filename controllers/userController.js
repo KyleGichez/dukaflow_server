@@ -33,7 +33,6 @@ exports.createStaff = async (req, res) => {
       message: "Staff member added successfully",
       user: newStaff,
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -90,19 +89,17 @@ exports.updateStaffRole = async (req, res) => {
         message: "Invalid role selected",
       });
     }
-    
 
     const staff = await User.findById(req.params.id);
 
-    if (
-      req.user._id.toString() || req.user.id.toString() === req.params.id &&
-      role !== "admin"
-    ) {
+    const userId = req.user._id?.toString() || req.user.id?.toString();
+
+    if (userId === req.params.id && role !== "admin") {
       return res.status(400).json({
         message: "You cannot remove your own admin privileges",
       });
     }
-
+    
     if (!staff) {
       return res.status(404).json({
         message: "Staff member not found",
@@ -138,9 +135,7 @@ exports.deleteStaff = async (req, res) => {
     }
 
     // 🔥 Check same business
-    if (
-      staffMember.businessId.toString() !== req.user.businessId.toString()
-    ) {
+    if (staffMember.businessId.toString() !== req.user.businessId.toString()) {
       return res.status(403).json({
         message: "Unauthorized: Cannot delete user from another business.",
       });
@@ -156,7 +151,6 @@ exports.deleteStaff = async (req, res) => {
     await User.findByIdAndDelete(staffId);
 
     res.json({ message: "Staff member removed successfully" });
-
   } catch (error) {
     console.error("Delete Error:", error.message);
     res.status(500).json({ error: error.message });
@@ -220,13 +214,13 @@ exports.updateSettings = async (req, res) => {
 exports.createBusiness = async (req, res) => {
   try {
     const { businessName, email, phone, city, status } = req.body;
-    
+
     const newBusiness = await Business.create({
       businessName,
       email,
       phone,
       city,
-      status
+      status,
     });
 
     res.status(201).json(newBusiness);
@@ -295,11 +289,13 @@ exports.updateUser = async (req, res) => {
     // 1. Handle Password: If password is empty or blank, don't update it
     if (password && password.trim() !== "") {
       // If you use bcrypt hashing in your model, this will trigger it
-      userData.password = password; 
+      userData.password = password;
     }
 
     // 2. Update the User
-    const user = await User.findByIdAndUpdate(req.params.id, userData, { new: true });
+    const user = await User.findByIdAndUpdate(req.params.id, userData, {
+      new: true,
+    });
 
     // 3. Update the Business (Now 'Business' is defined!)
     if (user.businessId && businessName) {
@@ -332,15 +328,19 @@ exports.deleteUserAndAssociatedData = async (req, res) => {
 
       // Delete the Business itself
       await Business.findByIdAndDelete(businessId);
-      
-      // Delete all staff members belonging to this business 
+
+      // Delete all staff members belonging to this business
       await User.deleteMany({ businessId: businessId });
     } else {
       // If no business (just a standalone user), just delete the user
       await User.findByIdAndDelete(userId);
     }
 
-    res.status(200).json({ message: "User, Business, and Subscriptions deleted successfully" });
+    res
+      .status(200)
+      .json({
+        message: "User, Business, and Subscriptions deleted successfully",
+      });
   } catch (error) {
     console.error("Delete Error:", error);
     res.status(500).json({ message: "Server error during deletion" });

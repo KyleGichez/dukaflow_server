@@ -10,7 +10,7 @@ router.use(authorize(["admin"]));
 
 router.post("/", createStaff);
 router.get("/", getStaff);
-router.post("/:id", updateStaffRole);
+router.put("/:id", updateStaffRole);
 router.delete("/:id", deleteStaff);
 
 module.exports = router; 
