@@ -1,312 +1,331 @@
-const Sale = require("../models/Sale");
-const Credit = require("../models/Credit");
-const Product = require("../models/Product");
-const mongoose = require("mongoose");
+const db = require("../config/db");
 
-function getDateFilter(range) {
-  const now = new Date();
-  let startDate = new Date();
-
+// Helper function to calculate date filters for SQLite queries
+function getDateFilterConstraint(range) {
   switch (range) {
     case "today":
-      startDate.setHours(0, 0, 0, 0);
-      break;
+      return "date(date) = date('now', 'localtime')";
     case "this-week":
-      startDate.setDate(now.getDate() - 7);
-      break;
+      return "date(date) >= date('now', '-7 days')";
     case "this-month":
-      startDate.setMonth(now.getMonth() - 1);
-      break;
+      return "date(date) >= date('now', '-1 month')";
     case "all-time":
-      return new Date(0);
     default:
-      return new Date(0);
+      return "1=1"; // Always true fallback
   }
-  return startDate;
 }
 
-// Create sale (Handles multi-item customer shopping baskets) and updates stock
-exports.createSale = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+// 1. Create Sale (Handles multi-item customer baskets, updates stock, manages credits)
+exports.createSale = (req, res) => {
+  const {
+    items,
+    paymentMethod,
+    date,
+    customerName,
+    customerPhone,
+    amountPaid,
+    nextPaymentDate,
+  } = req.body;
+  const businessId = req.user.businessId;
+  const userId = req.user?.id || req.user?._id;
 
-  try {
-    const {
-      items,
-      paymentMethod,
-      date,
-      customerName,
-      customerPhone,
-      amountPaid,
-      nextPaymentDate,
-    } = req.body;
-    const businessId = req.user.businessId;
-    const userId = req.user?.id || req.user?._id;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ message: "Your customer shopping basket is empty" });
+  }
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Your customer shopping basket is empty" });
-    }
+  const saleDate = date || new Date().toISOString();
+  const processedSalesIds = [];
 
-    const processedSalesIds = [];
+  // Wrap the entire item loop in an atomic SQLite transaction
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
 
-    for (const item of items) {
+    let itemIndex = 0;
+
+    function processNextItem() {
+      if (itemIndex >= items.length) {
+        // All items processed successfully! Commit the entire transaction block.
+        db.run("COMMIT", (commitErr) => {
+          if (commitErr) {
+            db.run("ROLLBACK");
+            return res.status(400).json({ message: commitErr.message });
+          }
+          fetchAndReturnSales();
+        });
+        return;
+      }
+
+      const item = items[itemIndex];
       const { productId, quantitySold } = item;
 
-      // 1. Find product ensuring it belongs to this business workspace
-      const product = await Product.findOne({
-        _id: productId,
-        businessId,
-      }).session(session);
-      if (!product) {
-        throw new Error(
-          `Product with ID ${productId} was not found in your workspace.`
-        );
+      // 1 & 2. Find product and verify offline stock constraints
+      const checkProductSql = "SELECT name, price, quantity FROM products WHERE id = ? AND businessId = ?";
+      db.get(checkProductSql, [productId, businessId], (err, product) => {
+        if (err || !product) {
+          db.run("ROLLBACK");
+          return res.status(400).json({ message: `Product with ID ${productId} was not found.` });
+        }
+
+        if (product.quantity < Number(quantitySold)) {
+          db.run("ROLLBACK");
+          return res.status(400).json({ 
+            message: `Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.` 
+          });
+        }
+
+        // 3. Financial calculations
+        const totalPrice = product.price * Number(quantitySold);
+        let assignedStatus = "Paid";
+        let initialBalance = 0;
+
+        if (paymentMethod === "Credit") {
+          const parsedPaid = Number(amountPaid || 0);
+          initialBalance = totalPrice - parsedPaid;
+          assignedStatus = initialBalance <= 0 ? "Paid" : parsedPaid > 0 ? "Partial" : "Pending";
+        }
+
+        // 4. Record individual line sale row
+        const insertSaleSql = `
+          INSERT INTO sales (productId, quantitySold, unitPrice, totalPrice, paymentMethod, paymentStatus, balance, date, businessId, soldBy)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        const saleParams = [productId, Number(quantitySold), product.price, totalPrice, paymentMethod, assignedStatus, initialBalance, saleDate, businessId, userId];
+
+        db.run(insertSaleSql, saleParams, function (saleErr) {
+          if (saleErr) {
+            db.run("ROLLBACK");
+            return res.status(400).json({ message: saleErr.message });
+          }
+
+          const newSaleId = this.lastID;
+          processedSalesIds.push(newSaleId);
+
+          // 5. Manage Credit Ledger entry if necessary
+          if (paymentMethod === "Credit") {
+            const insertCreditSql = `
+              INSERT INTO credits (productId, saleId, businessId, customerName, customerPhone, totalAmount, amountPaid, balance, status, nextPaymentDate, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+            const creditStatus = assignedStatus.toUpperCase();
+            const creditParams = [productId, newSaleId, businessId, customerName, customerPhone, totalPrice, Number(amountPaid || 0), initialBalance, creditStatus, nextPaymentDate || null, new Date().toISOString()];
+
+            db.run(insertCreditSql, creditParams, function (creditErr) {
+              if (creditErr) {
+                db.run("ROLLBACK");
+                return res.status(400).json({ message: creditErr.message });
+              }
+              updateStockAndContinue();
+            });
+          } else {
+            updateStockAndContinue();
+          }
+
+          // 6. Deduct inventory item calculations
+          function updateStockAndContinue() {
+            const updateStockSql = "UPDATE products SET quantity = quantity - ? WHERE id = ? AND businessId = ?";
+            db.run(updateStockSql, [Number(quantitySold), productId, businessId], (stockErr) => {
+              if (stockErr) {
+                db.run("ROLLBACK");
+                return res.status(400).json({ message: stockErr.message });
+              }
+              itemIndex++;
+              processNextItem(); // Loop to next basket item
+            });
+          }
+        });
+      });
+    }
+
+    // Emulates mongoose `.populate()` inside SQLite before returning response payload
+    function fetchAndReturnSales() {
+      const placeholders = processedSalesIds.map(() => "?").join(",");
+      const fetchSql = `
+        SELECT s.*, p.name as productName, p.price as productPrice, u.fname as userFname, u.role as userRole
+        FROM sales s
+        LEFT JOIN products p ON s.productId = p.id
+        LEFT JOIN users u ON s.soldBy = u.id
+        WHERE s.id IN (${placeholders})
+        ORDER BY s.id DESC
+      `;
+
+      db.all(fetchSql, processedSalesIds, (fetchErr, rows) => {
+        if (fetchErr) {
+          return res.status(400).json({ message: fetchErr.message });
+        }
+
+        // Format SQL flatten keys to match your frontend model templates
+        const formattedSales = rows.map(row => ({
+          ...row,
+          _id: row.id,
+          productId: { _id: row.productId, name: row.productName, price: row.productPrice },
+          soldBy: { fname: row.userFname, role: row.userRole }
+        }));
+
+        res.status(201).json({ success: true, sales: formattedSales });
+      });
+    }
+
+    processNextItem(); // Initialize transaction processor sequence
+  });
+};
+
+// 2. Get Sales History (Filtered by custom dates or presets)
+exports.getSales = (req, res) => {
+  const businessId = req.user.businessId;
+  const { range, startDate, endDate, paymentMethod } = req.query;
+
+  let queryConditions = ["s.businessId = ?"];
+  let queryParams = [businessId];
+
+  if (startDate && endDate) {
+    queryConditions.push("date(s.date) BETWEEN date(?) AND date(?)");
+    queryParams.push(startDate, endDate + "T23:59:59");
+  } else {
+    queryConditions.push(getDateFilterConstraint(range));
+  }
+
+  if (paymentMethod && paymentMethod !== "All") {
+    queryConditions.push("s.paymentMethod = ?");
+    queryParams.push(paymentMethod);
+  }
+
+  const sql = `
+    SELECT s.*, p.name as productName, p.price as productPrice, u.fname as userFname, u.role as userRole
+    FROM sales s
+    LEFT JOIN products p ON s.productId = p.id
+    LEFT JOIN users u ON s.soldBy = u.id
+    WHERE ${queryConditions.join(" AND ")}
+    ORDER BY s.date DESC
+  `;
+
+  db.all(sql, queryParams, (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: err.message });
+    }
+
+    const formattedSales = rows.map(row => ({
+      ...row,
+      _id: row.id,
+      productId: { _id: row.productId, name: row.productName, price: row.productPrice },
+      soldBy: { fname: row.userFname, role: row.userRole }
+    }));
+
+    res.json(formattedSales);
+  });
+};
+
+// 3. Delete Sale and restore item inventory metrics
+exports.deleteSale = (req, res) => {
+  const businessId = req.user.businessId;
+  const saleId = req.params.id;
+
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+
+    const findSaleSql = "SELECT productId, quantitySold FROM sales WHERE id = ? AND businessId = ?";
+    db.get(findSaleSql, [saleId, businessId], (err, sale) => {
+      if (err || !sale) {
+        db.run("ROLLBACK");
+        return res.status(404).json({ message: "Sale not found" });
       }
 
-      // 2. Check stock levels
-      if (product.quantity < Number(quantitySold)) {
-        throw new Error(
-          `Insufficient stock for ${product.name}. Only ${product.quantity} items remaining.`
-        );
-      }
+      const restoreStockSql = "UPDATE products SET quantity = quantity + ? WHERE id = ? AND businessId = ?";
+      db.run(restoreStockSql, [sale.quantitySold, sale.productId, businessId], (stockErr) => {
+        if (stockErr) {
+          db.run("ROLLBACK");
+          return res.status(500).json({ message: stockErr.message });
+        }
 
-      // 3. Calculate Item Total Price
-      const totalPrice = product.price * Number(quantitySold);
+        const deleteSaleSql = "DELETE FROM sales WHERE id = ? AND businessId = ?";
+        db.run(deleteSaleSql, [saleId, businessId], (deleteErr) => {
+          if (deleteErr) {
+            db.run("ROLLBACK");
+            return res.status(500).json({ message: deleteErr.message });
+          }
 
-      // Determine payment statuses and balances if it's a credit sale
-      let assignedStatus = "Paid";
-      let initialBalance = 0;
+          db.run("COMMIT");
+          res.json({ message: "Sale deleted and stock restored" });
+        });
+      });
+    });
+  });
+};
 
-      if (paymentMethod === "Credit") {
-        const parsedPaid = Number(amountPaid || 0);
-        initialBalance = totalPrice - parsedPaid;
-        assignedStatus =
-          initialBalance <= 0 ? "Paid" : parsedPaid > 0 ? "Partial" : "Pending";
-      }
+// 4. Get Dashboard Analytical Insights Summary without Mongo aggregation framework
+exports.getSalesSummary = (req, res) => {
+  const businessId = req.user.businessId;
+  const { range, startDate, endDate, paymentMethod } = req.query;
 
-      // 4. Instantiate item sale record line
-      const newSale = new Sale({
-        productId,
-        quantitySold: Number(quantitySold),
-        unitPrice: product.price,
-        totalPrice,
-        paymentMethod,
-        paymentStatus: assignedStatus,
-        balance: initialBalance,
-        date: date || new Date(),
-        businessId,
-        soldBy: userId,
+  let salesFilterConditions = ["businessId = ?"];
+  let salesFilterParams = [businessId];
+
+  if (startDate && endDate) {
+    salesFilterConditions.push("date(date) BETWEEN date(?) AND date(?)");
+    salesFilterParams.push(startDate, endDate + "T23:59:59");
+  } else {
+    salesFilterConditions.push(getDateFilterConstraint(range));
+  }
+
+  if (paymentMethod && paymentMethod !== "All") {
+    salesFilterConditions.push("paymentMethod = ?");
+    salesFilterParams.push(paymentMethod);
+  }
+
+  // SQLite multi-step execution pattern to calculate aggregate records sequentially
+  const salesQuery = `
+    SELECT 
+      SUM(totalPrice) as totalRevenue,
+      SUM(quantitySold) as totalItemsSold,
+      COUNT(id) as totalTransactions
+    FROM sales
+    WHERE ${salesFilterConditions.join(" AND ")}
+  `;
+
+  db.get(salesQuery, salesFilterParams, (err, mainStats) => {
+    if (err) return res.status(500).json({ message: err.message });
+
+    const breakdownQuery = `
+      SELECT paymentMethod, SUM(totalPrice) as amount
+      FROM sales
+      WHERE ${salesFilterConditions.join(" AND ")}
+      GROUP BY paymentMethod
+    `;
+
+    db.all(breakdownQuery, salesFilterParams, (breakdownErr, breakdownRows) => {
+      if (breakdownErr) return res.status(500).json({ message: breakdownErr.message });
+
+      const paymentBreakdown = {};
+      breakdownRows.forEach(row => {
+        if (row.paymentMethod) paymentBreakdown[row.paymentMethod] = row.amount;
       });
 
-      await newSale.save({ session });
+      // Calculate trailing 7 days and outstanding credit balance ledgers 
+      const summaryMetricsQuery = `
+        SELECT 
+          (SELECT COALESCE(SUM(totalPrice), 0) FROM sales WHERE businessId = ? AND date(date) >= date('now', '-7 days')) as revenue7Days,
+          (SELECT COALESCE(SUM(balance), 0) FROM credits WHERE businessId = ?) as outstandingCredits,
+          (SELECT COALESCE(SUM(price * quantity), 0) FROM products WHERE businessId = ?) as totalStockValue
+      `;
 
-      // 5. If it is a credit purchase, generate corresponding Credit Ledger row tracking document
-      if (paymentMethod === "Credit") {
-        await Credit.create(
-          [
-            {
-              productId,
-              saleId: newSale._id,
-              businessId,
-              customerName,
-              customerPhone,
-              totalAmount: totalPrice,
-              amountPaid: Number(amountPaid || 0),
-              balance: initialBalance,
-              status:
-                assignedStatus === "Paid"
-                  ? "PAID"
-                  : assignedStatus === "Partial"
-                  ? "PARTIAL"
-                  : "PENDING",
-              nextPaymentDate: nextPaymentDate || null,
-              businessId,
-              createdAt: new Date(),
-            },
-          ],
-          { session }
-        );
-      }
+      db.get(summaryMetricsQuery, [businessId, businessId, businessId], (summaryErr, metrics) => {
+        if (summaryErr) return res.status(500).json({ message: summaryErr.message });
 
-      // 6. Deduct inventory item stock
-      product.quantity -= Number(quantitySold);
-      await product.save({ session });
+        const revenue7Days = metrics.revenue7Days || 0;
+        const outstandingCredits = metrics.outstandingCredits || 0;
+        const profit7Days = revenue7Days - outstandingCredits;
+        const avgDailyProfit = profit7Days / 7;
 
-      processedSalesIds.push(newSale._id);
-    }
-
-    await session.commitTransaction();
-    session.endSession();
-
-    const newlyCreatedSales = await Sale.find({
-      _id: { $in: processedSalesIds },
-    })
-      .populate("productId")
-      .populate("soldBy", "fname role")
-      .lean()
-      .sort({ createdAt: -1 });
-
-    res.status(201).json({ success: true, sales: newlyCreatedSales });
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-    console.error("CREATE SALE TRANSACTION ERROR:", error);
-    res.status(400).json({ message: error.message });
-  }
-};
-
-exports.getSales = async (req, res) => {
-  try {
-    const businessId = req.user.businessId;
-    let startDate = getDateFilter(req.query.range);
-
-    if (!(startDate instanceof Date)) startDate = new Date(startDate);
-
-    const sales = await Sale.find({
-      businessId,
-      date: { $gte: startDate },
-    })
-      .populate("productId")
-      .populate("soldBy", "fname role")
-      .lean() // Populate the user who sold the item
-      .sort({ date: -1 });
-
-    res.json(sales);
-  } catch (error) {
-    console.error("GET SALES ERROR:", error);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-exports.deleteSale = async (req, res) => {
-  try {
-    const businessId = req.user.businessId;
-
-    // 1. Verify ownership
-    const sale = await Sale.findOne({ _id: req.params.id, businessId });
-    if (!sale) return res.status(404).json({ message: "Sale not found" });
-
-    // 2. Restore stock only to the owner's product
-    await Product.findOneAndUpdate(
-      { _id: sale.productId, businessId },
-      { $inc: { quantity: sale.quantitySold } }
-    );
-
-    // 3. Delete sale record
-    await Sale.findOneAndDelete({ _id: req.params.id, businessId });
-
-    res.json({ message: "Sale deleted and stock restored" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-exports.getSalesSummary = async (req, res) => {
-  try {
-    const businessId = req.user.businessId;
-
-    // Validate businessId early
-    if (!mongoose.Types.ObjectId.isValid(businessId)) {
-      return res.status(400).json({ message: "Invalid Business ID" });
-    }
-
-    const startDate = getDateFilter(req.query.range);
-
-    // Last 7 days calculations
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    const last7DaysSales = await Sale.find({
-      businessId,
-      date: { $gte: sevenDaysAgo },
+        res.json({
+          totalRevenue: mainStats.totalRevenue || 0,
+          totalItemsSold: mainStats.totalItemsSold || 0,
+          totalTransactions: mainStats.totalTransactions || 0,
+          totalStockValue: metrics.totalStockValue || 0,
+          profit7Days: profit7Days || 0,
+          avgDailyProfit: Math.round(avgDailyProfit || 0),
+          activeCredits: outstandingCredits || 0,
+          paymentBreakdown,
+        });
+      });
     });
-
-    const creditRecords = await Credit.find({
-      businessId,
-    });
-
-    const revenue7Days = last7DaysSales.reduce(
-      (sum, sale) => sum + Number(sale.totalPrice || 0),
-      0
-    );
-
-    const outstandingCredits = creditRecords.reduce(
-      (sum, credit) => sum + Number(credit.balance || 0),
-      0
-    );
-
-    // Profit = Revenue - unpaid credits
-    const profit7Days = revenue7Days - outstandingCredits;
-
-    const avgDailyProfit = profit7Days / 7;
-
-    const salesStats = await Sale.aggregate([
-      {
-        $match: {
-          businessId: new mongoose.Types.ObjectId(businessId),
-          date: { $gte: startDate },
-        },
-      },
-      {
-        $facet: {
-          totals: [
-            {
-              $group: {
-                _id: null,
-                totalRevenue: { $sum: "$totalPrice" },
-                totalItemsSold: { $sum: "$quantitySold" },
-                totalTransactions: { $sum: 1 },
-              },
-            },
-          ],
-          breakdown: [
-            {
-              $group: {
-                _id: "$paymentMethod",
-                amount: { $sum: "$totalPrice" },
-              },
-            },
-          ],
-        },
-      },
-    ]);
-
-    const inventoryStats = await Product.aggregate([
-      { $match: { businessId: new mongoose.Types.ObjectId(businessId) } },
-      {
-        $group: {
-          _id: null,
-          totalStockValue: { $sum: { $multiply: ["$price", "$quantity"] } },
-        },
-      },
-    ]);
-
-    // Safely extract stats
-    const stats = salesStats[0]?.totals[0] || {
-      totalRevenue: 0,
-      totalItemsSold: 0,
-      totalTransactions: 0,
-    };
-
-    const paymentBreakdown = {};
-    salesStats[0]?.breakdown?.forEach((item) => {
-      if (item._id) paymentBreakdown[item._id] = item.amount;
-    });
-
-    res.json({
-      totalRevenue: stats.totalRevenue || 0,
-      totalItemsSold: stats.totalItemsSold || 0,
-      totalTransactions: stats.totalTransactions || 0,
-      totalStockValue: inventoryStats[0]?.totalStockValue || 0,
-      profit7Days: profit7Days || 0,
-      avgDailyProfit: Math.round(avgDailyProfit || 0),
-      activeCredits: outstandingCredits || 0,
-      paymentBreakdown,
-    });
-  } catch (error) {
-    console.error("DETAILED SUMMARY ERROR:", error);
-    res.status(500).json({ message: error.message });
-  }
+  });
 };

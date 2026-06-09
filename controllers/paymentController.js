@@ -1,7 +1,7 @@
 const axios = require("axios");
-const Business = require("../models/Business");
+const db = require("../config/db");
 
-// Helper to get Safaricom OAuth Token
+// Helper to acquire Safaricom OAuth Gateway Token
 const getAccessToken = async () => {
   const auth = Buffer.from(
     `${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`
@@ -24,7 +24,7 @@ const getAccessToken = async () => {
   }
 };
 
-// Trigger the STK Push
+// 1. Trigger the STK Push Payment Request
 exports.stkPush = async (req, res) => {
   const { phone, amount, plan } = req.body;
   const businessId = req.user?.businessId;
@@ -32,7 +32,7 @@ exports.stkPush = async (req, res) => {
   try {
     const token = await getAccessToken();
 
-    // Format phone to 2547XXXXXXXX
+    // Format phone number uniformly to regional structures (2547XXXXXXXX)
     const formattedPhone = phone.startsWith("0")
       ? "254" + phone.slice(1)
       : phone;
@@ -54,7 +54,7 @@ exports.stkPush = async (req, res) => {
         BusinessShortCode: process.env.MPESA_SHORTCODE,
         Password: password,
         Timestamp: timestamp,
-        TransactionType: "CustomerPayBillOnline", // Keep this for Paybill
+        TransactionType: "CustomerPayBillOnline",
         Amount: Number(amount),
         PartyA: formattedPhone,
         PartyB: process.env.MPESA_SHORTCODE,
@@ -70,11 +70,15 @@ exports.stkPush = async (req, res) => {
       }
     );
 
-    // Save transaction reference
+    const checkoutRequestID = response.data.CheckoutRequestID;
+
+    // Cache the execution checkout token to identify the business callback
     if (businessId) {
-      await Business.findByIdAndUpdate(businessId, {
-        "subscription.lastTransactionId":
-          response.data.CheckoutRequestID,
+      const sql = "UPDATE businesses SET lastTransactionId = ? WHERE id = ?";
+      db.run(sql, [checkoutRequestID, businessId], function (err) {
+        if (err) {
+          console.error("SQL Error saving M-Pesa checkout token reference:", err.message);
+        }
       });
     }
 
@@ -83,10 +87,7 @@ exports.stkPush = async (req, res) => {
       data: response.data,
     });
   } catch (error) {
-    console.error(
-      "STK PUSH ERROR:",
-      error.response?.data || error.message
-    );
+    console.error("STK PUSH ERROR:", error.response?.data || error.message);
 
     res.status(500).json({
       error: error.message,
@@ -95,8 +96,8 @@ exports.stkPush = async (req, res) => {
   }
 };
 
-// M-pesa Callback
-exports.mpesaCallback = async (req, res) => {
+// 2. M-Pesa Webhook Callback Receiver
+exports.mpesaCallback = (req, res) => {
   try {
     if (!req.body.Body || !req.body.Body.stkCallback) {
       return res.json({ ResultCode: 0, ResultDesc: "Ignored" });
@@ -107,42 +108,68 @@ exports.mpesaCallback = async (req, res) => {
     if (result.ResultCode === 0) {
       const checkoutID = result.CheckoutRequestID;
 
-      const business = await Business.findOne({
-        "subscription.lastTransactionId": checkoutID,
-      });
+      // Locate the matching workspace reference using the transaction key
+      const selectSql = "SELECT id, email FROM businesses WHERE lastTransactionId = ?";
+      db.get(selectSql, [checkoutID], (err, business) => {
+        if (err || !business) {
+          console.error("Callback matching failed: Business reference not found locally.");
+          return;
+        }
 
-      if (business) {
-        const amountItem = result.CallbackMetadata.Item.find(
-          (i) => i.Name === "Amount"
-        );
-
+        const amountItem = result.CallbackMetadata?.Item?.find((i) => i.Name === "Amount");
         const amountPaid = amountItem?.Value || 0;
 
-        business.subscription.status = "active";
-        business.subscription.plan =
-          amountPaid >= 27000 ? "yearly" : "monthly";
-        business.subscription.startDate = new Date();
-        business.subscription.endDate = new Date(
-          Date.now() +
-            (amountPaid >= 27000 ? 365 : 30) *
-              24 *
-              60 *
-              60 *
-              1000
-        );
+        // Compute local workspace access constraints extension lengths
+        // Standard rate thresholds: >= 27000 indicates a full yearly license validation period
+        const chosenPlan = amountPaid >= 27000 ? "yearly" : "monthly";
+        const daysToAdd = amountPaid >= 27000 ? 365 : 30;
+        
+        const subscriptionEndsAt = new Date(
+          Date.now() + daysToAdd * 24 * 60 * 60 * 1000
+        ).toISOString();
 
-        await business.save();
+        db.serialize(() => {
+          db.run("BEGIN TRANSACTION");
 
-        console.log(
-          `Subscription activated for ${business.email}`
-        );
-      }
+          // Update the local Business subscription profile status mapping targets
+          const updateBusinessSql = `
+            UPDATE businesses 
+            SET status = 'active', subscriptionPlan = ?, subscriptionEndsAt = ?
+            WHERE id = ?
+          `;
+          db.run(updateBusinessSql, [chosenPlan, subscriptionEndsAt, business.id], function (businessErr) {
+            if (businessErr) {
+              db.run("ROLLBACK");
+              console.error("Failed handling callback business modifications:", businessErr.message);
+              return;
+            }
+
+            // Sync and log an audit tracking trail record inside the licensing table
+            const insertSubSql = `
+              INSERT INTO subscriptions (businessId, plan, status, endDate, createdAt)
+              VALUES (?, ?, 'active', ?, ?)
+            `;
+            const currentIsoDate = new Date().toISOString();
+            const subParams = [business.id, chosenPlan, subscriptionEndsAt, currentIsoDate];
+
+            db.run(insertSubSql, subParams, function (subErr) {
+              if (subErr) {
+                db.run("ROLLBACK");
+                console.error("Failed capturing callback license logging histories:", subErr.message);
+                return;
+              }
+
+              db.run("COMMIT");
+              console.log(`Subscription activated and logged for ${business.email || 'Workspace ID ' + business.id}`);
+            });
+          });
+        });
+      });
     }
 
     res.json({ ResultCode: 0, ResultDesc: "Success" });
   } catch (error) {
     console.error("CALLBACK ERROR:", error.message);
-
     res.json({ ResultCode: 0, ResultDesc: "Handled" });
   }
 };

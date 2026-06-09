@@ -1,110 +1,179 @@
-const Product = require("../models/Product");
-const Stock = require("../models/Stock");
+const db = require("../config/db"); // Path to your SQLite db configuration file
 
-// Create Product
-exports.createProduct = async (req, res) => {
-  try {
-    const { name, category, price, quantity, units } = req.body;
-    const businessId = req.user.businessId; // Extracted from JWT middleware
+// 1. Create Product & Initial Stock Entry
+exports.createProduct = (req, res) => {
+  const { name, category, price, quantity, units } = req.body;
+  const businessId = req.user.businessId; // Extracted from your JWT middleware
+  const trimmedName = name.trim();
 
-    // 1. Create the Product with businessId
-    const newProduct = await Product.create({
-      name: name.trim(),
-      category,
-      price,
-      quantity,
-      units,
-      businessId, // Link to the workspace
+  // Run as a transaction so if creating stock history fails, the product creation rolls back
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+
+    const insertProductSql = `
+      INSERT INTO products (name, category, price, quantity, units, businessId)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `;
+    const productParams = [trimmedName, category, price, quantity, units, businessId];
+
+    db.run(insertProductSql, productParams, function (err) {
+      if (err) {
+        db.run("ROLLBACK");
+        return res.status(400).json({ message: err.message });
+      }
+
+      const newProductId = this.lastID; // SQLite automatically provides the generated ID
+      const currentDate = new Date().toISOString();
+
+      const insertStockSql = `
+        INSERT INTO stocks (product_id, name, category, quantityAdded, units, price, date, businessId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      const stockParams = [newProductId, trimmedName, category, quantity, units, price, currentDate, businessId];
+
+      db.run(insertStockSql, stockParams, function (stockErr) {
+        if (stockErr) {
+          db.run("ROLLBACK");
+          return res.status(400).json({ message: stockErr.message });
+        }
+
+        db.run("COMMIT");
+
+        // Return a mock object matching your original MongoDB return structure
+        res.status(201).json({
+          id: newProductId,
+          name: trimmedName,
+          category,
+          price,
+          quantity,
+          units,
+          businessId
+        });
+      });
     });
+  });
+};
 
-    // 2. Create initial Stock entry with businessId
-    await Stock.create({
-      name: newProduct.name,
-      category: newProduct.category,
-      quantityAdded: newProduct.quantity,
-      units: newProduct.units,
-      price: newProduct.price,
-      date: new Date(),
-      product: newProduct._id,
-      businessId, // Link to the workspace
+// 2. Get All Products (Scoped to businessId)
+exports.getProducts = (req, res) => {
+  const businessId = req.user.businessId;
+  const sql = "SELECT * FROM products WHERE businessId = ?";
+
+  db.all(sql, [businessId], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: err.message });
+    }
+    res.json(rows);
+  });
+};
+
+// 3. Update Product & Update Stock Record
+exports.updateProduct = (req, res) => {
+  const { name, category, price, quantity, units } = req.body;
+  const businessId = req.user.businessId;
+  const productId = req.params.id; // Typically a numeric string now, e.g., "12"
+  const trimmedName = name.trim();
+  const newTotal = Number(quantity);
+
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+
+    // Check if the product exists and belongs to this business
+    const checkSql = "SELECT id FROM products WHERE id = ? AND businessId = ?";
+    db.get(checkSql, [productId, businessId], (err, row) => {
+      if (err || !row) {
+        db.run("ROLLBACK");
+        return res.status(404).json({ message: "Product not found in your workspace" });
+      }
+
+      // Update Product record
+      const updateProductSql = `
+        UPDATE products 
+        SET name = ?, category = ?, price = ?, quantity = ?, units = ?
+        WHERE id = ? AND businessId = ?
+      `;
+      const productParams = [trimmedName, category, price, newTotal, units, productId, businessId];
+
+      db.run(updateProductSql, productParams, function (updateErr) {
+        if (updateErr) {
+          db.run("ROLLBACK");
+          return res.status(400).json({ message: updateErr.message });
+        }
+
+        // SQLite Upsert logic for Stock update (updates if exists, creates if missing)
+        const currentDate = new Date().toISOString();
+        const updateStockSql = `
+          INSERT INTO stocks (product_id, name, category, quantityAdded, units, price, date, businessId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(product_id) DO UPDATE SET
+            name = excluded.name,
+            category = excluded.category,
+            price = excluded.price,
+            units = excluded.units,
+            quantityAdded = excluded.quantityAdded,
+            date = excluded.date
+        `;
+        const stockParams = [productId, trimmedName, category, newTotal, units, price, currentDate, businessId];
+
+        db.run(updateStockSql, stockParams, function (stockErr) {
+          if (stockErr) {
+            db.run("ROLLBACK");
+            return res.status(400).json({ message: stockErr.message });
+          }
+
+          db.run("COMMIT");
+
+          res.json({
+            id: productId,
+            name: trimmedName,
+            category,
+            price,
+            quantity: newTotal,
+            units,
+            businessId
+          });
+        });
+      });
     });
-
-    res.status(201).json(newProduct);
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
+  });
 };
 
-// Get All Products (Scoped to businessId)
-exports.getProducts = async (req, res) => {
-  try {
-    const products = await Product.find({ businessId: req.user.businessId });
-    res.json(products);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+// 4. Delete Product & All Stock History
+exports.deleteProduct = (req, res) => {
+  const businessId = req.user.businessId;
+  const productId = req.params.id;
 
-// Update Product
-exports.updateProduct = async (req, res) => {
-  try {
-    const { name, category, price, quantity, units } = req.body;
-    const businessId = req.user.businessId;
-    const productId = req.params.id;
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
 
-    // 1. Find the product and ensure it belongs to this business
-    const oldProduct = await Product.findOne({ _id: productId, businessId });
-    if (!oldProduct) return res.status(404).json({ message: "Product not found in your workspace" });
+    // Verify ownership before executing deletion strings
+    const checkSql = "SELECT id FROM products WHERE id = ? AND businessId = ?";
+    db.get(checkSql, [productId, businessId], (err, row) => {
+      if (err || !row) {
+        db.run("ROLLBACK");
+        return res.status(404).json({ message: "Product not found" });
+      }
 
-    const newTotal = Number(quantity);
+      // Delete stock history matching this product and workspace
+      const deleteStockSql = "DELETE FROM stocks WHERE product_id = ? AND businessId = ?";
+      db.run(deleteStockSql, [productId, businessId], function (stockErr) {
+        if (stockErr) {
+          db.run("ROLLBACK");
+          return res.status(500).json({ message: stockErr.message });
+        }
 
-    // 2. Update the Product balance
-    const updatedProduct = await Product.findOneAndUpdate(
-      { _id: productId, businessId }, // Safety check: must match businessId
-      { name: name.trim(), category, price, quantity: newTotal, units },
-      { new: true, runValidators: true }
-    );
+        // Delete the main product listing
+        const deleteProductSql = "DELETE FROM products WHERE id = ? AND businessId = ?";
+        db.run(deleteProductSql, [productId, businessId], function (productErr) {
+          if (productErr) {
+            db.run("ROLLBACK");
+            return res.status(500).json({ message: productErr.message });
+          }
 
-    // 3. Update the Stock record (Scope by productId and businessId)
-    await Stock.findOneAndUpdate(
-      { product: productId, businessId }, 
-      { 
-        $set: { 
-          name: name.trim(), 
-          category, 
-          price, 
-          units, 
-          quantityAdded: newTotal,
-          date: new Date(), 
-        } 
-      },
-      { upsert: true, returnDocument: 'after'}
-    );
-
-    res.json(updatedProduct);
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
-};
-
-// Delete Product
-exports.deleteProduct = async (req, res) => {
-  try {
-    const businessId = req.user.businessId;
-    const productId = req.params.id;
-
-    // 1. Verify ownership before deleting
-    const productToDelete = await Product.findOne({ _id: productId, businessId });
-    if (!productToDelete) return res.status(404).json({ message: "Product not found" });
-
-    // 2. Delete all Stock history for this product within this workspace
-    await Stock.deleteMany({ product: productId, businessId });
-
-    // 3. Delete the Product itself
-    await Product.findOneAndDelete({ _id: productId, businessId });
-
-    res.json({ message: "Product and all related stock history deleted" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+          db.run("COMMIT");
+          res.json({ message: "Product and all related stock history deleted" });
+        });
+      });
+    });
+  });
 };

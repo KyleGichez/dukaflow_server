@@ -1,348 +1,333 @@
-const User = require("../models/User");
-const Business = require("../models/Business");
-const Sale = require("../models/Sale");
-const Subscription = require("../models/Subscription");
+const db = require("../config/db");
 const bcrypt = require("bcryptjs");
 
-exports.createStaff = async (req, res) => {
-  try {
-    const { fname, lname, email, phone, password, role } = req.body;
+// 1. Create Staff Member
+exports.createStaff = (req, res) => {
+  const { fname, lname, email, phone, password, role } = req.body;
+  const businessId = req.user.businessId;
 
-    // 1. Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "Email already in use" });
-    }
+  const checkSql = "SELECT id FROM users WHERE email = ?";
+  db.get(checkSql, [email], async (err, existingUser) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (existingUser) return res.status(400).json({ message: "Email already in use" });
 
-    // 2. Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    try {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const insertSql = `
+        INSERT INTO users (fname, lname, email, phone, password, city, role, businessId)
+        VALUES (?, ?, ?, ?, ?, 'Default', ?, ?)
+      `;
+      const params = [fname, lname, email, phone, hashedPassword, role, businessId];
 
-    // 3. Create staff (linked to business)
-    const newStaff = await User.create({
-      fname,
-      lname,
-      email,
-      phone,
-      password: hashedPassword,
-      city: "Default",
-      role,
-      businessId: req.user.businessId,
-    });
-
-    res.status(201).json({
-      message: "Staff member added successfully",
-      user: newStaff,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-exports.getStaff = async (req, res) => {
-  try {
-    const staff = await User.find({
-      businessId: req.user.businessId,
-      role: { $ne: "superadmin" }, // optional safety
-    }).select("-Password");
-
-    const staffWithStats = await Promise.all(
-      staff.map(async (member) => {
-        const sales = await Sale.find({
-          soldBy: member._id,
+      db.run(insertSql, params, function (insertErr) {
+        if (insertErr) return res.status(500).json({ error: insertErr.message });
+        
+        res.status(201).json({
+          message: "Staff member added successfully",
+          user: { id: this.lastID, fname, lname, email, phone, role, businessId }
         });
-
-        const totalSales = sales.reduce(
-          (sum, sale) => sum + Number(sale.totalPrice || 0),
-          0
-        );
-
-        const itemsSold = sales.reduce(
-          (sum, sale) => sum + Number(sale.quantitySold || 0),
-          0
-        );
-
-        return {
-          ...member.toObject(),
-          totalSales,
-          itemsSold,
-        };
-      })
-    );
-
-    res.json(staffWithStats);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      message: "Failed to fetch staff",
-    });
-  }
+      });
+    } catch (hashError) {
+      res.status(500).json({ error: hashError.message });
+    }
+  });
 };
 
-exports.updateStaffRole = async (req, res) => {
-  try {
-    const { role } = req.body;
+// 2. Get Staff Performance Metrics (Calculates individual total sales & quantities)
+exports.getStaff = (req, res) => {
+  const businessId = req.user.businessId;
 
-    const allowedRoles = ["admin", "manager", "cashier"];
+  // Uses a relational subquery aggregation to calculate financial parameters instantly
+  const sql = `
+    SELECT 
+      u.id, u.fname, u.lname, u.email, u.phone, u.role, u.city, u.businessId, u.themePreference,
+      COALESCE(SUM(s.totalPrice), 0) as totalSales,
+      COALESCE(SUM(s.quantitySold), 0) as itemsSold
+    FROM users u
+    LEFT JOIN sales s ON u.id = s.soldBy
+    WHERE u.businessId = ? AND u.role != 'superadmin'
+    GROUP BY u.id
+  `;
 
-    if (!allowedRoles.includes(role)) {
-      return res.status(400).json({
-        message: "Invalid role selected",
-      });
-    }
-
-    const staff = await User.findById(req.params.id);
-
-    const userId = req.user._id?.toString() || req.user.id?.toString();
-
-    if (userId === req.params.id && role !== "admin") {
-      return res.status(400).json({
-        message: "You cannot remove your own admin privileges",
-      });
-    }
+  db.all(sql, [businessId], (err, rows) => {
+    if (err) return res.status(500).json({ message: "Failed to fetch staff", error: err.message });
     
-    if (!staff) {
-      return res.status(404).json({
-        message: "Staff member not found",
-      });
-    }
+    // Fallback adaptor mappings matching original model shapes
+    const formattedStaff = rows.map(row => ({ ...row, _id: row.id }));
+    res.json(formattedStaff);
+  });
+};
 
-    staff.role = role;
+// 3. Update Staff Security Role
+exports.updateStaffRole = (req, res) => {
+  const { role } = req.body;
+  const staffId = req.params.id;
+  const allowedRoles = ["admin", "manager", "cashier"];
 
-    await staff.save();
+  if (!allowedRoles.includes(role)) return res.status(400).json({ message: "Invalid role selected" });
 
-    res.status(200).json({
-      success: true,
-      message: "Role updated successfully",
-      staff,
+  const userId = req.user._id?.toString() || req.user.id?.toString();
+  if (userId === staffId && role !== "admin") {
+    return res.status(400).json({ message: "You cannot remove your own admin privileges" });
+  }
+
+  const findSql = "SELECT id FROM users WHERE id = ?";
+  db.get(findSql, [staffId], (err, staff) => {
+    if (err || !staff) return res.status(404).json({ message: "Staff member not found" });
+
+    const updateSql = "UPDATE users SET role = ? WHERE id = ?";
+    db.run(updateSql, [role, staffId], function (updateErr) {
+      if (updateErr) return res.status(500).json({ message: "Failed to update role" });
+      res.status(200).json({ success: true, message: "Role updated successfully" });
     });
-  } catch (error) {
-    console.error(error);
+  });
+};
 
-    res.status(500).json({
-      message: "Failed to update role",
+// 4. Delete Staff Profile
+exports.deleteStaff = (req, res) => {
+  const staffId = req.params.id;
+  const currentUserId = req.user.id || req.user._id;
+
+  const sql = "SELECT id, businessId FROM users WHERE id = ?";
+  db.get(sql, [staffId], (err, staffMember) => {
+    if (err || !staffMember) return res.status(404).json({ message: "Staff member not found" });
+
+    if (String(staffMember.businessId) !== String(req.user.businessId)) {
+      return res.status(403).json({ message: "Unauthorized: Cannot delete user from another business." });
+    }
+
+    if (String(staffMember.id) === String(currentUserId)) {
+      return res.status(400).json({ message: "You cannot delete your own account." });
+    }
+
+    db.run("DELETE FROM users WHERE id = ?", [staffId], (deleteErr) => {
+      if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+      res.json({ message: "Staff member removed successfully" });
     });
-  }
+  });
 };
 
-exports.deleteStaff = async (req, res) => {
-  try {
-    const staffId = req.params.id;
+// 5. Update Profile & Security Passwords Settings
+exports.updateSettings = (req, res) => {
+  const userId = req.user.id;
+  const { fname, lname, email, currentPassword, newPassword, themePreference } = req.body;
 
-    const staffMember = await User.findById(staffId);
+  const sql = "SELECT * FROM users WHERE id = ?";
+  db.get(sql, [userId], async (err, user) => {
+    if (err || !user) return res.status(404).json({ message: "User not found" });
 
-    if (!staffMember) {
-      return res.status(404).json({ message: "Staff member not found" });
-    }
+    try {
+      let hashedPassword = user.password;
+      if (currentPassword && newPassword) {
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) return res.status(400).json({ message: "Current password incorrect" });
+        hashedPassword = await bcrypt.hash(newPassword, 10);
+      }
 
-    // 🔥 Check same business
-    if (staffMember.businessId.toString() !== req.user.businessId.toString()) {
-      return res.status(403).json({
-        message: "Unauthorized: Cannot delete user from another business.",
+      const updateSql = `
+        UPDATE users 
+        SET fname = ?, lname = ?, email = ?, password = ?, themePreference = ? 
+        WHERE id = ?
+      `;
+      const params = [
+        fname || user.fname,
+        lname || user.lname,
+        email || user.email,
+        hashedPassword,
+        themePreference || user.themePreference,
+        userId
+      ];
+
+      db.run(updateSql, params, function (updateErr) {
+        if (updateErr) return res.status(500).json({ message: updateErr.message });
+        
+        res.status(200).json({
+          message: "Settings updated successfully",
+          user: {
+            _id: userId,
+            fname: fname || user.fname,
+            lname: lname || user.lname,
+            email: email || user.email,
+            role: user.role,
+            themePreference: themePreference || user.themePreference
+          }
+        });
       });
+    } catch (passwordError) {
+      res.status(500).json({ message: passwordError.message });
     }
+  });
+};
 
-    // 🔥 Prevent deleting self (optional but smart)
-    if (staffMember._id.toString() === req.user.id) {
-      return res.status(400).json({
-        message: "You cannot delete your own account.",
+// 6. Create Workspace Business Profile
+exports.createBusiness = (req, res) => {
+  const { businessName, email, phone, city, status } = req.body;
+
+  const sql = `
+    INSERT INTO businesses (businessName, email, phone, city, status)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+  db.run(sql, [businessName, email, phone, city, status || 'active'], function (err) {
+    if (err) return res.status(500).json({ message: err.message });
+    res.status(201).json({ id: this.lastID, businessName, email, phone, city, status });
+  });
+};
+
+// 7. Superadmin View → Fetch All System Registered Accounts
+exports.getAllUsers = (req, res) => {
+  const sql = `
+    SELECT u.id, u.fname, u.lname, u.email, u.phone, u.role, u.city, u.businessId, b.businessName
+    FROM users u
+    LEFT JOIN businesses b ON u.businessId = b.id
+  `;
+
+  db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ message: err.message });
+
+    const formattedUsers = rows.map(row => ({
+      ...row,
+      _id: row.id,
+      businessId: row.businessId ? { _id: row.businessId, businessName: row.businessName } : null
+    }));
+    res.json(formattedUsers);
+  });
+};
+
+// 8. Superadmin View → Fetch Registered Businesses with Realtime Live Counts
+exports.getAllBusinesses = (req, res) => {
+  const sql = `
+    SELECT 
+      b.*, 
+      u.fname as ownerFname, u.lname as ownerLname,
+      (SELECT COUNT(id) FROM users WHERE businessId = b.id) as totalUsers
+    FROM businesses b
+    LEFT JOIN users u ON b.ownerId = u.id
+    ORDER BY b.id DESC
+  `;
+
+  db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ message: "Server Error", error: err.message });
+
+    const formattedBusinesses = rows.map(row => ({
+      ...row,
+      _id: row.id,
+      ownerId: row.ownerId ? { _id: row.ownerId, fname: row.ownerFname, lname: row.ownerLname } : null
+    }));
+    res.status(200).json(formattedBusinesses);
+  });
+};
+
+// 9. Admin View → Fetch Staff Members Operating within the same Workspace
+exports.getBusinessUsers = (req, res) => {
+  const businessId = req.user.businessId;
+  const sql = "SELECT id, fname, lname, email, phone, role, city, businessId FROM users WHERE businessId = ?";
+
+  db.all(sql, [businessId], (err, rows) => {
+    if (err) return res.status(500).json({ message: err.message });
+    const formatted = rows.map(row => ({ ...row, _id: row.id }));
+    res.json(formatted);
+  });
+};
+
+// 10. Update User Meta Specs & Accompanying Workspace Metadata Structures
+exports.updateUser = (req, res) => {
+  const userId = req.params.id;
+  const { businessName, password, ...userData } = req.body;
+  const fields = Object.keys(userData);
+
+  db.serialize(async () => {
+    db.run("BEGIN TRANSACTION");
+
+    try {
+      if (password && password.trim() !== "") {
+        fields.push("password");
+        userData.password = await bcrypt.hash(password, 10);
+      }
+
+      if (fields.length > 0) {
+        const sets = fields.map(f => `${f} = ?`).join(", ");
+        const params = [...fields.map(f => userData[f]), userId];
+        
+        db.run(`UPDATE users SET ${sets} WHERE id = ?`, params, (err) => {
+          if (err) throw err;
+        });
+      }
+
+      // Sync and apply company business name updates if parameters match
+      if (businessName) {
+        db.run(
+          "UPDATE businesses SET businessName = ? WHERE id = (SELECT businessId FROM users WHERE id = ?)",
+          [businessName, userId],
+          (err) => { if (err) throw err; }
+        );
+      }
+
+      db.run("COMMIT");
+      
+      // Pull and return the clean, updated snapshot back to React state trees
+      const selectSql = `
+        SELECT u.*, b.businessName, b.city as bCity, b.phone as bPhone 
+        FROM users u 
+        LEFT JOIN businesses b ON u.businessId = b.id WHERE u.id = ?
+      `;
+      db.get(selectSql, [userId], (err, row) => {
+        if (err || !row) return res.status(500).json({ message: "Failed formatting final object" });
+        
+        res.json({
+          ...row,
+          _id: row.id,
+          businessId: row.businessId ? { _id: row.businessId, businessName: row.businessName, city: row.bCity, phone: row.bPhone } : null
+        });
       });
+
+    } catch (txError) {
+      db.run("ROLLBACK");
+      res.status(500).json({ message: txError.message });
     }
-
-    await User.findByIdAndDelete(staffId);
-
-    res.json({ message: "Staff member removed successfully" });
-  } catch (error) {
-    console.error("Delete Error:", error.message);
-    res.status(500).json({ error: error.message });
-  }
+  });
 };
 
-exports.updateSettings = async (req, res) => {
-  try {
-    const {
-      fname,
-      lname,
-      email,
-      currentPassword,
-      newPassword,
-      themePreference,
-    } = req.body;
+// 11. Purge Account Profile, Subscriptions, Staff logs and data paths
+exports.deleteUserAndAssociatedData = (req, res) => {
+  const userId = req.params.id;
 
-    // 1. Find user by ID (from the 'protect' middleware)
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
 
-    // 2. Handle Password Change (Optional)
-    if (currentPassword && newPassword) {
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch)
-        return res.status(400).json({ message: "Current password incorrect" });
+    const selectSql = "SELECT businessId FROM users WHERE id = ?";
+    db.get(selectSql, [userId], (err, user) => {
+      if (err || !user) {
+        db.run("ROLLBACK");
+        return res.status(404).json({ message: "User not found" });
+      }
 
-      const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(newPassword, salt);
-    }
+      const businessId = user.businessId;
 
-    // 3. Update other fields
-    if (fname) user.fname = fname;
-    if (lname) user.lname = lname;
-    if (email) user.email = email;
-    if (req.body.themePreference) {
-      user.themePreference = req.body.themePreference;
-    }
+      if (businessId) {
+        // Cascade delete subscriptions, companies, and associated staff members sequentially
+        db.run("DELETE FROM subscriptions WHERE businessId = ?", [businessId], (e1) => {
+          if (e1) { db.run("ROLLBACK"); return res.status(500).json({ message: e1.message }); }
 
-    await user.save();
+          db.run("DELETE FROM businesses WHERE id = ?", [businessId], (e2) => {
+            if (e2) { db.run("ROLLBACK"); return res.status(500).json({ message: e2.message }); }
 
-    // 4. Return updated user (without password)
-    const updatedUser = {
-      _id: user._id,
-      fname: user.fname,
-      lname: user.lname,
-      email: user.email,
-      role: user.role,
-      themePreference: user.themePreference,
-    };
+            db.run("DELETE FROM users WHERE businessId = ?", [businessId], (e3) => {
+              if (e3) { db.run("ROLLBACK"); return res.status(500).json({ message: e3.message }); }
 
-    res
-      .status(200)
-      .json({ message: "Settings updated successfully", user: updatedUser });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-    console.log(error);
-  }
-};
-
-exports.createBusiness = async (req, res) => {
-  try {
-    const { businessName, email, phone, city, status } = req.body;
-
-    const newBusiness = await Business.create({
-      businessName,
-      email,
-      phone,
-      city,
-      status,
+              db.run("COMMIT");
+              res.status(200).json({ message: "User, Business, and Subscriptions deleted successfully" });
+            });
+          });
+        });
+      } else {
+        // Standalone user account logic route
+        db.run("DELETE FROM users WHERE id = ?", [userId], (standaloneErr) => {
+          if (standaloneErr) { db.run("ROLLBACK"); return res.status(500).json({ message: standaloneErr.message }); }
+          
+          db.run("COMMIT");
+          res.status(200).json({ message: "User deleted successfully" });
+        });
+      }
     });
-
-    res.status(201).json(newBusiness);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-// 👑 Superadmin → all users
-exports.getAllUsers = async (req, res) => {
-  try {
-    const users = await User.find()
-      .populate("businessId", "businessName")
-      .select("-password");
-
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-exports.getAllBusinesses = async (req, res) => {
-  try {
-    // 1. Fetch businesses and populate owner names
-    const businesses = await Business.find({})
-      .populate("ownerId", "fname lname")
-      .sort({ createdAt: -1 })
-      .lean(); // Use .lean() to allow adding extra fields like 'totalUsers'
-
-    // 2. Attach the live count of users for each business
-    const businessesWithCounts = await Promise.all(
-      businesses.map(async (biz) => {
-        const userCount = await User.countDocuments({ businessId: biz._id });
-        return {
-          ...biz,
-          totalUsers: userCount, // This matches your frontend {biz.totalUsers}
-        };
-      })
-    );
-
-    res.status(200).json(businessesWithCounts);
-  } catch (error) {
-    console.error("Error fetching businesses:", error);
-    res.status(500).json({ message: "Server Error" });
-  }
-};
-
-// 🧑‍💼 Admin → only their business users
-exports.getBusinessUsers = async (req, res) => {
-  try {
-    const users = await User.find({
-      businessId: req.user.businessId,
-    }).select("-password");
-
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-// Update User (Universal for Admin and Superadmin)
-exports.updateUser = async (req, res) => {
-  try {
-    const { businessName, password, ...userData } = req.body;
-
-    // 1. Handle Password: If password is empty or blank, don't update it
-    if (password && password.trim() !== "") {
-      // If you use bcrypt hashing in your model, this will trigger it
-      userData.password = password;
-    }
-
-    // 2. Update the User
-    const user = await User.findByIdAndUpdate(req.params.id, userData, {
-      new: true,
-    });
-
-    // 3. Update the Business (Now 'Business' is defined!)
-    if (user.businessId && businessName) {
-      await Business.findByIdAndUpdate(user.businessId, { businessName });
-    }
-
-    const updatedUser = await User.findById(user._id).populate("businessId");
-    res.json(updatedUser);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-exports.deleteUserAndAssociatedData = async (req, res) => {
-  try {
-    const userId = req.params.id;
-
-    // 1. Find the user first to get their businessId
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const businessId = user.businessId;
-
-    // 2. If the user has a business, delete the business and its subscription
-    if (businessId) {
-      // Delete the Subscription associated with this business
-      await Subscription.deleteMany({ businessId: businessId });
-
-      // Delete the Business itself
-      await Business.findByIdAndDelete(businessId);
-
-      // Delete all staff members belonging to this business
-      await User.deleteMany({ businessId: businessId });
-    } else {
-      // If no business (just a standalone user), just delete the user
-      await User.findByIdAndDelete(userId);
-    }
-
-    res
-      .status(200)
-      .json({
-        message: "User, Business, and Subscriptions deleted successfully",
-      });
-  } catch (error) {
-    console.error("Delete Error:", error);
-    res.status(500).json({ message: "Server error during deletion" });
-  }
+  });
 };

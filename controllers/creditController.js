@@ -1,306 +1,245 @@
-const Credit = require("../models/Credit");
-const Sale = require("../models/Sale");
-const mongoose = require("mongoose");
+const db = require("../config/db");
 
-exports.createCredit = async (req, res) => {
-  try {
-    const credit = await Credit.create({
-      ...req.body,
-      businessId: req.user.businessId, 
-      amountPaid: req.body.amountPaid || 0,
-      createdAt: new Date(),
-    });
+// 1. Create Credit Ledger Row Document
+exports.createCredit = (req, res) => {
+  const businessId = req.user.businessId;
+  const amountPaid = req.body.amountPaid || 0;
+  const createdAt = new Date().toISOString();
 
-    res.status(201).json(credit);
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to create credit record",
-      error: error.message,
-    });
-  }
+  // Extract keys explicitly from req.body to map dynamically into SQL
+  const { productId, saleId, customerName, customerPhone, totalAmount, balance, status, nextPaymentDate } = req.body;
+
+  const sql = `
+    INSERT INTO credits (productId, saleId, businessId, customerName, customerPhone, totalAmount, amountPaid, balance, status, nextPaymentDate, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+  const params = [productId, saleId, businessId, customerName, customerPhone, totalAmount, amountPaid, balance, status, nextPaymentDate, createdAt];
+
+  db.run(sql, params, function (err) {
+    if (err) {
+      return res.status(500).json({ message: "Failed to create credit record", error: err.message });
+    }
+    res.status(201).json({ id: this.lastID, ...req.body, businessId, amountPaid, createdAt });
+  });
 };
 
-exports.getCredits = async (req, res) => {
-  try {
-    const query = { businessId: req.user.businessId };
+// 2. Get All Credits (Filtered by customer names or tracking statuses)
+exports.getCredits = (req, res) => {
+  const businessId = req.user.businessId;
+  const { customerName, status } = req.query;
 
-    if (req.query.customerName) {
-      query.customerName = req.query.customerName;
-    }
-    
-    if (req.query.status) {
-      query.status = req.query.status;
-    }
+  let queryConditions = ["c.businessId = ?"];
+  let queryParams = [businessId];
 
-    const credits = await Credit.find(query)
-      .populate("productId")
-      .populate("saleId")
-      .sort({ createdAt: -1 });
-
-    res.status(200).json(credits);
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch credits for this business",
-      error: error.message,
-    });
+  if (customerName) {
+    queryConditions.push("c.customerName = ?");
+    queryParams.push(customerName);
   }
+  if (status) {
+    queryConditions.push("c.status = ?");
+    queryParams.push(status);
+  }
+
+  // Uses relational JOIN operations to replicate Mongoose's .populate() functionality safely offline
+  const sql = `
+    SELECT c.*, p.name as productName, p.price as productPrice, s.totalPrice as saleTotalPrice, s.paymentMethod as salePaymentMethod
+    FROM credits c
+    LEFT JOIN products p ON c.productId = p.id
+    LEFT JOIN sales s ON c.saleId = s.id
+    WHERE ${queryConditions.join(" AND ")}
+    ORDER BY c.createdAt DESC
+  `;
+
+  db.all(sql, queryParams, (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Failed to fetch credits for this business", error: err.message });
+    }
+
+    // Map properties into nested object trees so your existing React code layout doesn't break
+    const formattedCredits = rows.map(row => ({
+      ...row,
+      _id: row.id,
+      productId: { _id: row.productId, name: row.productName, price: row.productPrice },
+      saleId: { _id: row.saleId, totalPrice: row.saleTotalPrice, paymentMethod: row.salePaymentMethod }
+    }));
+
+    res.status(200).json(formattedCredits);
+  });
 };
 
-exports.getCreditById = async (req, res) => {
-  try {
-    // Find by ID AND ensure it belongs to the requesting business
-    const credit = await Credit.findOne({
-      _id: req.params.id,
-      businessId: req.user.businessId,
-    });
+// 3. Get Single Credit Object By ID
+exports.getCreditById = (req, res) => {
+  const businessId = req.user.businessId;
+  const creditId = req.params.id;
 
-    if (!credit) {
-      return res.status(404).json({
-        message: "Credit record not found or unauthorized",
-      });
+  const sql = "SELECT * FROM credits WHERE id = ? AND businessId = ?";
+  db.get(sql, [creditId, businessId], (err, row) => {
+    if (err || !row) {
+      return res.status(404).json({ message: "Credit record not found or unauthorized" });
     }
-
-    res.status(200).json(credit);
-  } catch (error) {
-    res.status(500).json({
-      message: "Error fetching credit",
-      error: error.message,
-    });
-  }
+    res.status(200).json({ ...row, _id: row.id });
+  });
 };
 
-exports.updateCredit = async (req, res) => {
-  try {
-    const updated = await Credit.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
+// 4. Update Credit Metadata Fields
+exports.updateCredit = (req, res) => {
+  const creditId = req.params.id;
+  const fields = Object.keys(req.body);
+  
+  if (fields.length === 0) return res.status(400).json({ message: "No update parameters provided" });
 
-    if (!updated) {
-      return res.status(404).json({
-        message: "Credit not found",
-      });
+  // Dynamically compile an execution query string matching whatever property fields React passed
+  const sets = fields.map(field => `${field} = ?`).join(", ");
+  const sql = `UPDATE credits SET ${sets} WHERE id = ?`;
+  const params = [...fields.map(field => req.body[field]), creditId];
+
+  db.run(sql, params, function (err) {
+    if (err || this.changes === 0) {
+      return res.status(404).json({ message: "Credit not found or update execution failed" });
     }
-
-    res.status(200).json(updated);
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to update credit",
-      error: error.message,
-    });
-  }
+    res.status(200).json({ id: creditId, ...req.body });
+  });
 };
 
-exports.addPayment = async (req, res) => {
-  try {
-    const { amount, nextPaymentDate, method } = req.body;
+// 5. Add Repayment Log Entry (Strict validation, status changes, multi-table automated clears)
+exports.addPayment = (req, res) => {
+  const creditId = req.params.id;
+  const { amount, nextPaymentDate, method } = req.body;
+  const paymentAmount = Number(amount);
 
-    // =========================
-    // VALIDATE AMOUNT (STRICT)
-    // =========================
-    const paymentAmount = Number(amount);
+  if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
+    return res.status(400).json({ message: "Invalid payment amount" });
+  }
 
-    if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
-      return res.status(400).json({
-        message: "Invalid payment amount",
-      });
-    }
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
 
-    // =========================
-    // FIND CREDIT
-    // =========================
-    const credit = await Credit.findById(req.params.id);
-
-    if (!credit) {
-      return res.status(404).json({
-        message: "Credit not found",
-      });
-    }
-
-    // =========================
-    // ENSURE SAFE DEFAULTS
-    // =========================
-    credit.paymentHistory = Array.isArray(credit.paymentHistory)
-      ? credit.paymentHistory
-      : [];
-
-    const total = Number(credit.totalAmount || 0);
-    const currentPaid = Number(credit.amountPaid || 0);
-
-    const newPaid = currentPaid + paymentAmount;
-
-    // =========================
-    // PREVENT OVERPAYMENT
-    // =========================
-    if (newPaid > total) {
-      return res.status(400).json({
-        message: "Payment exceeds remaining balance",
-      });
-    }
-
-    // =========================
-    // UPDATE CREDIT VALUES
-    // =========================
-    credit.amountPaid = newPaid;
-    credit.balance = total - newPaid;
-
-    if (nextPaymentDate) {
-      credit.nextPaymentDate = nextPaymentDate;
-    }
-
-    // =========================
-    // PAYMENT HISTORY (SAFE PUSH)
-    // =========================
-    credit.paymentHistory.push({
-      amount: paymentAmount,
-      method: method || "Cash",
-      date: new Date(),
-    });
-
-    // =========================
-    // STATUS UPDATE (CLEAN LOGIC)
-    // =========================
-    if (credit.balance <= 0) {
-      credit.status = "PAID";
-    } else {
-      credit.status = "PARTIAL";
-    }
-
-    await credit.save();
-
-    // =========================
-    // UPDATE RELATED SALES
-    // =========================
-
-    // Update current sale first
-    const sale = await Sale.findById(credit.saleId);
-
-    if (sale) {
-      sale.balance = credit.balance;
-      sale.paymentStatus = credit.balance <= 0 ? "Paid" : "Partial";
-      await sale.save();
-    }
-
-    // Check if ALL debts for this customer are now cleared
-    const remainingCredits = await Credit.find({
-      customerName: credit.customerName,
-      customerPhone: credit.customerPhone,
-      balance: { $gt: 0 },
-    });
-
-    const customerFullyCleared = remainingCredits.length === 0;
-
-    if (customerFullyCleared) {
-      const customerCredits = await Credit.find({
-        customerName: credit.customerName,
-        customerPhone: credit.customerPhone,
-      });
-
-      const saleIds = customerCredits.map((c) => c.saleId).filter(Boolean);
-
-      if (saleIds.length > 0) {
-        await Sale.updateMany(
-          {
-            _id: { $in: saleIds },
-          },
-          {
-            $set: {
-              paymentStatus: "Paid",
-              balance: 0,
-            },
-          }
-        );
+    const selectCreditSql = "SELECT * FROM credits WHERE id = ?";
+    db.get(selectCreditSql, [creditId], (err, credit) => {
+      if (err || !credit) {
+        db.run("ROLLBACK");
+        return res.status(404).json({ message: "Credit record instance not found" });
       }
 
-      await Credit.updateMany(
-        {
-          customerName: credit.customerName,
-          customerPhone: credit.customerPhone,
-        },
-        {
-          $set: {
-            status: "PAID",
-            balance: 0,
-          },
+      const total = Number(credit.totalAmount || 0);
+      const currentPaid = Number(credit.amountPaid || 0);
+      const newPaid = currentPaid + paymentAmount;
+
+      if (newPaid > total) {
+        db.run("ROLLBACK");
+        return res.status(400).json({ message: "Payment exceeds remaining balance" });
+      }
+
+      const newBalance = total - newPaid;
+      const updatedStatus = newBalance <= 0 ? "PAID" : "PARTIAL";
+      const paymentDate = new Date().toISOString();
+
+      // Step A: Append entry tracking log row directly into the relational sub-table
+      const insertPaymentSql = "INSERT INTO credit_payments (creditId, amount, method, date) VALUES (?, ?, ?, ?)";
+      db.run(insertPaymentSql, [creditId, paymentAmount, method || "Cash", paymentDate], function (paymentErr) {
+        if (paymentErr) {
+          db.run("ROLLBACK");
+          return res.status(500).json({ message: "Failed to log database payment item line" });
         }
-      );
-    }
 
-    // =========================
-    // RESPONSE
-    // =========================
-    return res.status(200).json({
-      success: true,
-      message:
-        credit.balance <= 0
-          ? "Credit fully cleared successfully"
-          : "Payment added successfully",
-      credit,
-    });
-  } catch (error) {
-    console.error("ADD PAYMENT ERROR:", error);
+        // Step B: Update master credit ledger rows with calculations
+        const updateCreditSql = `
+          UPDATE credits 
+          SET amountPaid = ?, balance = ?, nextPaymentDate = ?, status = ? 
+          WHERE id = ?
+        `;
+        db.run(updateCreditSql, [newPaid, newBalance, nextPaymentDate || credit.nextPaymentDate, updatedStatus, creditId], function (creditUpdateErr) {
+          if (creditUpdateErr) {
+            db.run("ROLLBACK");
+            return res.status(500).json({ message: "Failed to calculate updated balance paths" });
+          }
 
-    return res.status(500).json({
-      message: "Failed to add payment",
-      error: error.message,
+          // Step C: Sync changes instantly with related sale transaction status maps
+          const updateSaleSql = "UPDATE sales SET balance = ?, paymentStatus = ? WHERE id = ?";
+          db.run(updateSaleSql, [newBalance, newBalance <= 0 ? "Paid" : "Partial", credit.saleId], function (saleUpdateErr) {
+            if (saleUpdateErr) {
+              db.run("ROLLBACK");
+              return res.status(500).json({ message: "Failed syncing updates to invoice lines" });
+            }
+
+            // Step D: Evaluate if customer cleared ALL outstanding debts across the store
+            const checkAllDebtsSql = "SELECT id FROM credits WHERE customerName = ? AND customerPhone = ? AND balance > 0 AND id != ?";
+            db.get(checkAllDebtsSql, [credit.customerName, credit.customerPhone, creditId], (debtErr, remainingDebt) => {
+              
+              // If another unpaid ledger entry is found OR this specific payment didn't clear the balance, skip massive wipe
+              if (remainingDebt || newBalance > 0) {
+                db.run("COMMIT");
+                return res.status(200).json({ success: true, message: "Payment added successfully" });
+              }
+
+              // Customer is completely debt-free: Update ALL their historical credits and sales to PAID natively
+              const updateAllCreditsSql = "UPDATE credits SET status = 'PAID', balance = 0 WHERE customerName = ? AND customerPhone = ?";
+              db.run(updateAllCreditsSql, [credit.customerName, credit.customerPhone], function () {
+                
+                const updateAllSalesSql = `
+                  UPDATE sales SET paymentStatus = 'Paid', balance = 0 
+                  WHERE id IN (SELECT saleId FROM credits WHERE customerName = ? AND customerPhone = ?)
+                `;
+                db.run(updateAllSalesSql, [credit.customerName, credit.customerPhone], function () {
+                  db.run("COMMIT");
+                  res.status(200).json({ success: true, message: "Credit fully cleared successfully" });
+                });
+              });
+            });
+          });
+        });
+      });
     });
-  }
+  });
 };
 
-exports.deleteCredit = async (req, res) => {
-  try {
-    const deleted = await Credit.findByIdAndDelete(req.params.id);
-
-    if (!deleted) {
-      return res.status(404).json({
-        message: "Credit not found",
-      });
+// 6. Delete Credit Line Entirely
+exports.deleteCredit = (req, res) => {
+  const sql = "DELETE FROM credits WHERE id = ?";
+  db.run(sql, [req.params.id], function (err) {
+    if (err || this.changes === 0) {
+      return res.status(404).json({ message: "Credit item not found or failed to erase" });
     }
-
-    res.status(200).json({
-      message: "Credit deleted successfully",
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to delete credit",
-      error: error.message,
-    });
-  }
+    res.status(200).json({ message: "Credit deleted successfully" });
+  });
 };
 
-exports.getCreditPayments = async (req, res) => {
-  try {
-    const { range } = req.query;
-    let startDate = new Date();
-    startDate.setHours(0, 0, 0, 0); // Default to start of today
+// 7. Fetch Unified Offline Repayments History Reports
+exports.getCreditPayments = (req, res) => {
+  const { range } = req.query;
+  
+  let dateConstraint = "date(cp.date) <= date('now', 'localtime')";
+  
+  if (range === "this-week") {
+    dateConstraint += " AND date(cp.date) >= date('now', '-7 days')";
+  } else if (range === "this-month") {
+    dateConstraint += " AND date(cp.date) >= date('now', '-1 month')";
+  } else if (range === "today") {
+    dateConstraint += " AND date(cp.date) = date('now', 'localtime')";
+  } // 'all-time' omits filters and returns all records
 
-    const now = new Date();
+  const sql = `
+    SELECT cp.*, c.customerName, c.customerPhone
+    FROM credit_payments cp
+    LEFT JOIN credits c ON cp.creditId = c.id
+    WHERE ${dateConstraint}
+    ORDER BY cp.date DESC
+  `;
 
-    // Handle range filtering conditions mirroring your sales engine
-    if (range === "this-week") {
-      const day = startDate.getDay();
-      const diff = startDate.getDate() - day + (day === 0 ? -6 : 1); // Adjust to get Monday
-      startDate = new Date(startDate.setDate(diff));
-    } else if (range === "this-month") {
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-    } else if (range === "all-time") {
-      startDate = new Date(0); // Epoch time (returns everything)
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Server error fetching repayments history", error: err.message });
     }
-    // "today" keeps the default start of today
 
-    // Fetch records where payment date is greater than or equal to the filtered start date
-    // If your application tracks user-specific data, add a shop/user filter here: { shopId: req.user.shopId }
-    const payments = await CreditPayment.find({
-      date: { $gte: startDate, $lte: now },
-    }).populate("customerId", "name"); // Optional styling populate
+    // Structure properties into an object mapping layout mimicking your MongoDB shape
+    const formattedPayments = rows.map(row => ({
+      _id: row.id,
+      amount: row.amount,
+      method: row.method,
+      date: row.date,
+      customerId: { name: row.customerName, phone: row.customerPhone }
+    }));
 
-    res.status(200).json(payments);
-  } catch (error) {
-    console.error("Error in getCreditPayments backend:", error);
-    res
-      .status(500)
-      .json({
-        message: "Server error fetching repayments history",
-        error: error.message,
-      });
-  }
+    res.status(200).json(formattedPayments);
+  });
 };
