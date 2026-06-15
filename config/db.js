@@ -1,9 +1,7 @@
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 
-// FORCE a unified path for local development so scripts and server sync up!
 const dbPath = path.join(__dirname, "../pos_system.db");
-
 console.log(`[SQLite Target] Binding engine instance to: ${dbPath}`);
 
 const db = new sqlite3.Database(dbPath, (err) => {
@@ -17,7 +15,6 @@ const db = new sqlite3.Database(dbPath, (err) => {
 
 function initializeTables() {
   db.serialize(() => {
-    // 💡 Enable foreign keys right away
     db.run("PRAGMA foreign_keys = ON");
 
     // LAYER 1: BASE INDEPENDENT TABLES
@@ -48,7 +45,6 @@ function initializeTables() {
       )
     `);
 
-    // Seed Critical Business Data Immediately
     db.run(`
       INSERT OR IGNORE INTO businesses (id, businessName, phone, city, status, subscriptionPlan) 
       VALUES (1, 'Default Retailer Headquarters', '+254 700 000000', 'Nairobi, Kenya', 'active', 'lifetime')
@@ -219,19 +215,36 @@ function initializeTables() {
       )
     `);
 
-    db.run("ALTER TABLE sales ADD COLUMN paymentReference TEXT;", (err) => {});
-    db.run("ALTER TABLE sales ADD COLUMN bankingDetails TEXT;", (err) => {});
+    // MIGRATIONS
+    db.run("ALTER TABLE sales ADD COLUMN paymentReference TEXT;", () => {});
+    db.run("ALTER TABLE sales ADD COLUMN bankingDetails TEXT;", () => {});
+    db.run("ALTER TABLE credit_payments ADD COLUMN paymentReference TEXT;", () => {});
+    db.run("ALTER TABLE credit_payments ADD COLUMN bankingDetails TEXT;", () => {});
+    db.run("ALTER TABLE invoices ADD COLUMN soldBy INTEGER;", () => {});
+    db.run("ALTER TABLE credits ADD COLUMN customerId INTEGER;", () => {});
 
-    db.run("ALTER TABLE credit_payments ADD COLUMN paymentReference TEXT;", (err) => {});
-    db.run("ALTER TABLE credit_payments ADD COLUMN bankingDetails TEXT;", (err) => {});
+    // 🌟 THE CRITICAL FIX: Run the user checking inside serialization step
+    // This forces SQLite to finish executing all previous steps before executing this block.
+    db.get("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'", (err, row) => {
+      if (err) {
+        console.error("❌ Error checking for admin existence:", err.message);
+      } else if (row.count === 0) {
+        console.log("ℹ️ No admin user found. Seeding default super-admin...");
+        
+        // Replace with your preferred default credentials
+        db.run(`
+          INSERT INTO users (fname, lname, email, password, role, businessId)
+          VALUES ('Super', 'Admin', 'admin@dukaflow.com', 'your_secure_hashed_password', 'admin', 1)
+        `, (insertErr) => {
+          if (insertErr) console.error("❌ Failed to seed default admin:", insertErr.message);
+          else console.log("✅ Default super-admin seeded successfully.");
+        });
+      } else {
+        console.log("✅ Admin user verification check completed safely.");
+      }
+    });
 
-    
-
-    // 🛠️ MIGRATIONS: Structural fallbacks for existing historical DB files
-    db.run("ALTER TABLE invoices ADD COLUMN soldBy INTEGER;", (err) => {});
-    db.run("ALTER TABLE credits ADD COLUMN customerId INTEGER;", (err) => {});
   });
 }
 
-// 📦 Make sure this object is exported cleanly so our API file can see it
 module.exports = db;
