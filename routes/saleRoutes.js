@@ -10,11 +10,14 @@ const {
   getSalesSummary
 } = require("../controllers/saleController");
 
+// Global middleware for this entire route file
 router.use(auth);
 
-router.post("/", auth, checkSub, authorize(["admin", "manager", "cashier"]), createSale);
-router.get("/", auth, authorize(["admin", "manager", "cashier"]), getSales);
-router.get('/summary', auth, authorize(["admin", "manager", "cashier"]), getSalesSummary);
-router.delete("/:id", auth, checkSub, authorize(["admin", "manager", "cashier"]), deleteSale);
+// 🛒 This is the exact endpoint that receives checkout actions!
+router.post("/", checkSub, authorize(["admin", "manager", "cashier"]), createSale);
+
+router.get("/", authorize(["admin", "manager", "cashier"]), getSales);
+router.get('/summary', authorize(["admin", "manager", "cashier"]), getSalesSummary);
+router.delete("/:id", checkSub, authorize(["admin", "manager", "cashier"]), deleteSale);
 
 module.exports = router;

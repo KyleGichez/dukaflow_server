@@ -6,6 +6,19 @@ exports.createProduct = (req, res) => {
   const businessId = req.user.businessId; // Extracted from your JWT middleware
   const trimmedName = name.trim();
 
+  const userRole = (req.user.role || req.user.Role || "").toLowerCase().replace("_", "");
+
+  // 💡 THE CRITICAL FIX: Bypass subscription checks if it's a super_admin
+  if (userRole !== 'superadmin') {
+    // Your existing database call evaluating business subscriptions:
+    // db.get("SELECT status FROM subscriptions WHERE businessId = ?", [businessId], ...)
+    
+    // Ensure that if a business lookup returns undefined, it safely returns an error instead of breaking:
+    if (!businessId) {
+      return res.status(400).json({ message: "This staff account is not assigned to an active business workspace." });
+    }
+  }
+
   // Run as a transaction so if creating stock history fails, the product creation rolls back
   db.serialize(() => {
     db.run("BEGIN TRANSACTION");
@@ -67,11 +80,11 @@ exports.getProducts = (req, res) => {
   });
 };
 
-// 3. Update Product & Update Stock Record
+// 3. Update Product & Append Stock History Log Record
 exports.updateProduct = (req, res) => {
   const { name, category, price, quantity, units } = req.body;
   const businessId = req.user.businessId;
-  const productId = req.params.id; // Typically a numeric string now, e.g., "12"
+  const productId = req.params.id; 
   const trimmedName = name.trim();
   const newTotal = Number(quantity);
 
@@ -100,22 +113,16 @@ exports.updateProduct = (req, res) => {
           return res.status(400).json({ message: updateErr.message });
         }
 
-        // SQLite Upsert logic for Stock update (updates if exists, creates if missing)
+        // 📝 FIX HERE: Insert a clean new stock movement/history log entry 
+        // instead of a conflicting ON CONFLICT upsert.
         const currentDate = new Date().toISOString();
-        const updateStockSql = `
+        const insertStockSql = `
           INSERT INTO stocks (product_id, name, category, quantityAdded, units, price, date, businessId)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(product_id) DO UPDATE SET
-            name = excluded.name,
-            category = excluded.category,
-            price = excluded.price,
-            units = excluded.units,
-            quantityAdded = excluded.quantityAdded,
-            date = excluded.date
         `;
         const stockParams = [productId, trimmedName, category, newTotal, units, price, currentDate, businessId];
 
-        db.run(updateStockSql, stockParams, function (stockErr) {
+        db.run(insertStockSql, stockParams, function (stockErr) {
           if (stockErr) {
             db.run("ROLLBACK");
             return res.status(400).json({ message: stockErr.message });
@@ -123,8 +130,9 @@ exports.updateProduct = (req, res) => {
 
           db.run("COMMIT");
 
+          // Return structured data object matching frontend expectations
           res.json({
-            id: productId,
+            id: Number(productId), // Cast to number for local SQLite compliance
             name: trimmedName,
             category,
             price,

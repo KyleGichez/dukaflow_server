@@ -2,29 +2,16 @@ const mongoose = require("mongoose");
 
 const stockSchema = new mongoose.Schema(
   {
-    product: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
-      required: false,
-      default: null
-    },
-    date: {
-      type: Date,
-      default: Date.now
-    },
-    category: {type: String, required: true},
-    name: {type: String, required: true},
+    product_id: { type: Number, required: true },
+    name: { type: String, required: true },
+    category: { type: String, required: true },
     quantityAdded: { type: Number, required: true },
-    totalStockAfter: { type: Number },
     units: { type: String, required: true },
     price: { type: Number, required: true },
-    businessId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Business",
-      required: true,
-    }
+    date: { type: String, required: true },
+    businessId: { type: Number, required: true }
   },
   { timestamps: true }
 );
 
-module.exports =  mongoose.model("Stock", stockSchema); 
+module.exports = mongoose.model("Stock", stockSchema);

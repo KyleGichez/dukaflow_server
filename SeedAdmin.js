@@ -1,44 +1,84 @@
 require("dotenv").config();
-const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
-const User = require("./models/User");
+const db = require("./config/db"); 
 
 const seedAdmin = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
+    console.log("⏳ Initializing local SQLite system administrator build...");
+
+    // Unified credentials from environment or exact defaults
     const email = process.env.SUPERADMIN_EMAIL || "dukaflowadmin@gmail.com";
-    
-    // 1. Prevent duplicates
-    const existingAdmin = await User.findOne({ email: email });
+    const plainPassword = process.env.SUPERADMIN_PASSWORD || "Admin@2026"; 
+    const phone = "0793410951"; 
+    const businessId = 1; 
 
-    if (existingAdmin) {
-      console.log("⚠️ Admin already exists");
-      process.exit();
-    }
+    // Clean check targeting the distinct email profile
+    const checkAdminSql = `SELECT * FROM users WHERE email = ? LIMIT 1`;
 
-    // 2. Hash password
-    const hashedPassword = await bcrypt.hash(process.env.SUPERADMIN_PASSWORD, 10);
+    db.get(checkAdminSql, [email], async (err, existingAdmin) => {
+      if (err) {
+        console.error("❌ Error checking for existing admin table records:", err.message);
+        process.exit(1);
+      }
 
-    
-    // 3. Create admin
-    const admin = await User.create({
-      fname: "Gichure",
-      lname: "Maina",
-      email: email,
-      phone: "0793410951",
-      password: hashedPassword,
-      city: "Nakuru",
-      role: "superadmin",
-      isActive: true,
+      const hashedPassword = await bcrypt.hash(plainPassword, 10);
+
+      if (existingAdmin) {
+        console.log("⚠️ Superadmin exists. Syncing credentials securely...");
+        
+        // 💡 REMOVED 'status' column to match your actual schema
+        const updateAdminSql = `
+          UPDATE users 
+          SET password = ?, phone = ?, businessId = ? 
+          WHERE email = ?
+        `;
+        db.run(updateAdminSql, [hashedPassword, phone, businessId, email], (updateErr) => {
+          if (updateErr) console.error("❌ Failed to update admin record:", updateErr.message);
+          console.log("✅ Existing superadmin credentials synchronized perfectly!");
+          process.exit(0);
+        });
+        return;
+      }
+
+      // 💡 REMOVED 'status' from the column list and values array here too!
+      const insertAdminSql = `
+        INSERT INTO users (fname, lname, email, phone, password, city, role, businessId)
+        VALUES (?, ?, ?, ?, ?, ?, 'superadmin', ?)
+      `;
+
+      db.run(
+        insertAdminSql,
+        [
+          "Gichure",
+          "Maina",
+          email,
+          phone,
+          hashedPassword,
+          "Nakuru", 
+          businessId
+        ],
+        function (insertErr) {
+          if (insertErr) {
+            console.error("❌ Failed to register superadmin database row:", insertErr.message);
+            process.exit(1);
+          }
+
+          console.log("\n==================================================");
+          console.log(`✅ Super admin created successfully: Gichure Maina`);
+          console.log(`📱 Login Phone Number: ${phone}`);
+          console.log(`✉️ Login Email Address: ${email}`);
+          console.log("==================================================\n");
+          process.exit(0);
+        }
+      );
     });
 
-    console.log("✅ Super admin created:", admin.fname, admin.lname);
-    process.exit();
-
   } catch (error) {
-    console.error("❌ Error seeding admin:", error);
+    console.error("❌ Critical script execution crash:", error);
     process.exit(1);
   }
 };
 
-seedAdmin();
+setTimeout(() => {
+  seedAdmin();
+}, 500);

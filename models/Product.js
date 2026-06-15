@@ -6,12 +6,8 @@ const productSchema = new mongoose.Schema(
     category: { type: String, required: true },
     price: { type: Number, required: true },
     quantity: { type: Number, default: 0, required: true },
-    units: { type: String, required: true},
-    businessId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Business",
-      required: true,
-    }
+    units: { type: String, required: true },
+    businessId: { type: Number, required: true } // Matches SQLite INTEGER id
   },
   { timestamps: true }
 );

@@ -7,22 +7,57 @@ exports.createCredit = (req, res) => {
   const createdAt = new Date().toISOString();
 
   // Extract keys explicitly from req.body to map dynamically into SQL
-  const { productId, saleId, customerName, customerPhone, totalAmount, balance, status, nextPaymentDate } = req.body;
+  const {
+    productId,
+    saleId,
+    customerName,
+    customerPhone,
+    totalAmount,
+    balance,
+    status,
+    nextPaymentDate,
+  } = req.body;
 
   const sql = `
     INSERT INTO credits (productId, saleId, businessId, customerName, customerPhone, totalAmount, amountPaid, balance, status, nextPaymentDate, createdAt)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
-  const params = [productId, saleId, businessId, customerName, customerPhone, totalAmount, amountPaid, balance, status, nextPaymentDate, createdAt];
+  const params = [
+    productId,
+    saleId,
+    businessId,
+    customerName,
+    customerPhone,
+    totalAmount,
+    amountPaid,
+    balance,
+    status,
+    nextPaymentDate,
+    createdAt,
+  ];
 
   db.run(sql, params, function (err) {
     if (err) {
-      return res.status(500).json({ message: "Failed to create credit record", error: err.message });
+      return res
+        .status(500)
+        .json({
+          message: "Failed to create credit record",
+          error: err.message,
+        });
     }
-    res.status(201).json({ id: this.lastID, ...req.body, businessId, amountPaid, createdAt });
+    res
+      .status(201)
+      .json({
+        id: this.lastID,
+        ...req.body,
+        businessId,
+        amountPaid,
+        createdAt,
+      });
   });
 };
 
+// 
 // 2. Get All Credits (Filtered by customer names or tracking statuses)
 exports.getCredits = (req, res) => {
   const businessId = req.user.businessId;
@@ -40,9 +75,14 @@ exports.getCredits = (req, res) => {
     queryParams.push(status);
   }
 
-  // Uses relational JOIN operations to replicate Mongoose's .populate() functionality safely offline
   const sql = `
-    SELECT c.*, p.name as productName, p.price as productPrice, s.totalPrice as saleTotalPrice, s.paymentMethod as salePaymentMethod
+    SELECT 
+      c.*, 
+      p.name as productName, p.price as productPrice, 
+      s.totalPrice as saleTotalPrice, s.paymentMethod as salePaymentMethod,
+      (SELECT json_group_array(
+        json_object('id', cp.id, 'amount', cp.amount, 'method', cp.method, 'date', cp.date)
+      ) FROM credit_payments cp WHERE cp.creditId = c.id) as historyRaw
     FROM credits c
     LEFT JOIN products p ON c.productId = p.id
     LEFT JOIN sales s ON c.saleId = s.id
@@ -52,21 +92,40 @@ exports.getCredits = (req, res) => {
 
   db.all(sql, queryParams, (err, rows) => {
     if (err) {
-      return res.status(500).json({ message: "Failed to fetch credits for this business", error: err.message });
+      return res.status(500).json({
+        message: "Failed to fetch credits for this business",
+        error: err.message,
+      });
     }
 
-    // Map properties into nested object trees so your existing React code layout doesn't break
-    const formattedCredits = rows.map(row => ({
-      ...row,
-      _id: row.id,
-      productId: { _id: row.productId, name: row.productName, price: row.productPrice },
-      saleId: { _id: row.saleId, totalPrice: row.saleTotalPrice, paymentMethod: row.salePaymentMethod }
-    }));
+    const formattedCredits = rows.map((row) => {
+      let history = [];
+      try {
+        history = row.historyRaw ? JSON.parse(row.historyRaw) : [];
+      } catch (e) {
+        history = [];
+      }
+
+      return {
+        ...row,
+        _id: row.id,
+        productId: {
+          _id: row.productId,
+          name: row.productName,
+          price: row.productPrice,
+        },
+        saleId: {
+          _id: row.saleId,
+          totalPrice: row.saleTotalPrice,
+          paymentMethod: row.salePaymentMethod,
+        },
+        paymentHistory: history // Explicit mapping so frontend state can safely compute balance tracking arrays
+      };
+    });
 
     res.status(200).json(formattedCredits);
   });
 };
-
 // 3. Get Single Credit Object By ID
 exports.getCreditById = (req, res) => {
   const businessId = req.user.businessId;
@@ -75,7 +134,9 @@ exports.getCreditById = (req, res) => {
   const sql = "SELECT * FROM credits WHERE id = ? AND businessId = ?";
   db.get(sql, [creditId, businessId], (err, row) => {
     if (err || !row) {
-      return res.status(404).json({ message: "Credit record not found or unauthorized" });
+      return res
+        .status(404)
+        .json({ message: "Credit record not found or unauthorized" });
     }
     res.status(200).json({ ...row, _id: row.id });
   });
@@ -85,17 +146,20 @@ exports.getCreditById = (req, res) => {
 exports.updateCredit = (req, res) => {
   const creditId = req.params.id;
   const fields = Object.keys(req.body);
-  
-  if (fields.length === 0) return res.status(400).json({ message: "No update parameters provided" });
+
+  if (fields.length === 0)
+    return res.status(400).json({ message: "No update parameters provided" });
 
   // Dynamically compile an execution query string matching whatever property fields React passed
-  const sets = fields.map(field => `${field} = ?`).join(", ");
+  const sets = fields.map((field) => `${field} = ?`).join(", ");
   const sql = `UPDATE credits SET ${sets} WHERE id = ?`;
-  const params = [...fields.map(field => req.body[field]), creditId];
+  const params = [...fields.map((field) => req.body[field]), creditId];
 
   db.run(sql, params, function (err) {
     if (err || this.changes === 0) {
-      return res.status(404).json({ message: "Credit not found or update execution failed" });
+      return res
+        .status(404)
+        .json({ message: "Credit not found or update execution failed" });
     }
     res.status(200).json({ id: creditId, ...req.body });
   });
@@ -111,8 +175,11 @@ exports.addPayment = (req, res) => {
     return res.status(400).json({ message: "Invalid payment amount" });
   }
 
-  db.serialize(() => {
-    db.run("BEGIN TRANSACTION");
+  // Use an isolated transaction sequence to enforce thread safety across rapid loops
+  db.run("BEGIN IMMEDIATE TRANSACTION", (initErr) => {
+    if (initErr) {
+      return res.status(500).json({ message: "Database lock conflict. Try again.", error: initErr.message });
+    }
 
     const selectCreditSql = "SELECT * FROM credits WHERE id = ?";
     db.get(selectCreditSql, [creditId], (err, credit) => {
@@ -130,11 +197,11 @@ exports.addPayment = (req, res) => {
         return res.status(400).json({ message: "Payment exceeds remaining balance" });
       }
 
-      const newBalance = total - newPaid;
+      const newBalance = Math.max(0, total - newPaid);
       const updatedStatus = newBalance <= 0 ? "PAID" : "PARTIAL";
       const paymentDate = new Date().toISOString();
 
-      // Step A: Append entry tracking log row directly into the relational sub-table
+      // Step A: Log line item receipt entry 
       const insertPaymentSql = "INSERT INTO credit_payments (creditId, amount, method, date) VALUES (?, ?, ?, ?)";
       db.run(insertPaymentSql, [creditId, paymentAmount, method || "Cash", paymentDate], function (paymentErr) {
         if (paymentErr) {
@@ -142,7 +209,7 @@ exports.addPayment = (req, res) => {
           return res.status(500).json({ message: "Failed to log database payment item line" });
         }
 
-        // Step B: Update master credit ledger rows with calculations
+        // Step B: Update target master ledger record fields
         const updateCreditSql = `
           UPDATE credits 
           SET amountPaid = ?, balance = ?, nextPaymentDate = ?, status = ? 
@@ -154,7 +221,7 @@ exports.addPayment = (req, res) => {
             return res.status(500).json({ message: "Failed to calculate updated balance paths" });
           }
 
-          // Step C: Sync changes instantly with related sale transaction status maps
+          // Step C: Sync modifications with relational invoices instantly
           const updateSaleSql = "UPDATE sales SET balance = ?, paymentStatus = ? WHERE id = ?";
           db.run(updateSaleSql, [newBalance, newBalance <= 0 ? "Paid" : "Partial", credit.saleId], function (saleUpdateErr) {
             if (saleUpdateErr) {
@@ -162,17 +229,30 @@ exports.addPayment = (req, res) => {
               return res.status(500).json({ message: "Failed syncing updates to invoice lines" });
             }
 
-            // Step D: Evaluate if customer cleared ALL outstanding debts across the store
+            // Step D: Evaluate cumulative customer standing across store history
             const checkAllDebtsSql = "SELECT id FROM credits WHERE customerName = ? AND customerPhone = ? AND balance > 0 AND id != ?";
             db.get(checkAllDebtsSql, [credit.customerName, credit.customerPhone, creditId], (debtErr, remainingDebt) => {
               
-              // If another unpaid ledger entry is found OR this specific payment didn't clear the balance, skip massive wipe
+              // If customer still has other active debt ledger records, commit this row change safely
               if (remainingDebt || newBalance > 0) {
-                db.run("COMMIT");
-                return res.status(200).json({ success: true, message: "Payment added successfully" });
+                db.run("COMMIT", (commitErr) => {
+                  if (commitErr) {
+                    db.run("ROLLBACK");
+                    return res.status(500).json({ message: "Transaction commit failed" });
+                  }
+                  // CRITICAL: Deliver complete JSON variables to update your frontend state tree context immediately!
+                  return res.status(200).json({ 
+                    success: true, 
+                    message: "Payment added successfully",
+                    _id: creditId,
+                    remainingDebt: newBalance,
+                    balance: newBalance
+                  });
+                });
+                return;
               }
 
-              // Customer is completely debt-free: Update ALL their historical credits and sales to PAID natively
+              // If entirely debt-free: perform atomic cascading cleanup parameters
               const updateAllCreditsSql = "UPDATE credits SET status = 'PAID', balance = 0 WHERE customerName = ? AND customerPhone = ?";
               db.run(updateAllCreditsSql, [credit.customerName, credit.customerPhone], function () {
                 
@@ -181,8 +261,19 @@ exports.addPayment = (req, res) => {
                   WHERE id IN (SELECT saleId FROM credits WHERE customerName = ? AND customerPhone = ?)
                 `;
                 db.run(updateAllSalesSql, [credit.customerName, credit.customerPhone], function () {
-                  db.run("COMMIT");
-                  res.status(200).json({ success: true, message: "Credit fully cleared successfully" });
+                  db.run("COMMIT", (finalCommitErr) => {
+                    if (finalCommitErr) {
+                      db.run("ROLLBACK");
+                      return res.status(500).json({ message: "Transaction final execution commit failed" });
+                    }
+                    return res.status(200).json({ 
+                      success: true, 
+                      message: "Credit fully cleared successfully",
+                      _id: creditId,
+                      remainingDebt: 0,
+                      balance: 0
+                    });
+                  });
                 });
               });
             });
@@ -198,7 +289,9 @@ exports.deleteCredit = (req, res) => {
   const sql = "DELETE FROM credits WHERE id = ?";
   db.run(sql, [req.params.id], function (err) {
     if (err || this.changes === 0) {
-      return res.status(404).json({ message: "Credit item not found or failed to erase" });
+      return res
+        .status(404)
+        .json({ message: "Credit item not found or failed to erase" });
     }
     res.status(200).json({ message: "Credit deleted successfully" });
   });
@@ -207,9 +300,9 @@ exports.deleteCredit = (req, res) => {
 // 7. Fetch Unified Offline Repayments History Reports
 exports.getCreditPayments = (req, res) => {
   const { range } = req.query;
-  
+
   let dateConstraint = "date(cp.date) <= date('now', 'localtime')";
-  
+
   if (range === "this-week") {
     dateConstraint += " AND date(cp.date) >= date('now', '-7 days')";
   } else if (range === "this-month") {
@@ -228,16 +321,21 @@ exports.getCreditPayments = (req, res) => {
 
   db.all(sql, [], (err, rows) => {
     if (err) {
-      return res.status(500).json({ message: "Server error fetching repayments history", error: err.message });
+      return res
+        .status(500)
+        .json({
+          message: "Server error fetching repayments history",
+          error: err.message,
+        });
     }
 
     // Structure properties into an object mapping layout mimicking your MongoDB shape
-    const formattedPayments = rows.map(row => ({
+    const formattedPayments = rows.map((row) => ({
       _id: row.id,
       amount: row.amount,
       method: row.method,
       date: row.date,
-      customerId: { name: row.customerName, phone: row.customerPhone }
+      customerId: { name: row.customerName, phone: row.customerPhone },
     }));
 
     res.status(200).json(formattedPayments);

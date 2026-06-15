@@ -2,38 +2,21 @@ const mongoose = require("mongoose");
 
 const saleSchema = new mongoose.Schema(
   {
-    productId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
-      required: true,
-    },
-    date: { type: Date, required: true },
+    invoiceId: { type: Number, required: true }, // Links directly to the invoice record
+    productId: { type: Number, required: true },
     quantitySold: { type: Number, required: true },
-    unitPrice: { type: Number },
+    unitPrice: { type: Number, required: true },
     totalPrice: { type: Number, required: true },
-    units: { type: String },
     paymentMethod: { type: String, required: true },
-    soldBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-    businessId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Business",
-      required: true,
-    },
-    createdAt: { type: Date, default: Date.now },
-    paymentStatus: {
-      type: String,
-      enum: ["Paid", "Pending", "Partial"],
-      default: "Paid",
-    },
-    balance: {
-      type: Number,
-      default: 0,
-    },
+    paymentStatus: { type: String, required: true },
+    balance: { type: Number, default: 0 },
+    date: { type: String, required: true }, // Matches local timestamp strings
+    businessId: { type: Number, required: true },
+    soldBy: { type: Number, required: true }
   },
   { timestamps: true }
 );
+
+saleSchema.index({ businessId: 1, date: -1 });
 
 module.exports = mongoose.model("Sale", saleSchema);

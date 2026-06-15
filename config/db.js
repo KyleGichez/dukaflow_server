@@ -1,21 +1,11 @@
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
-const fs = require("fs");
 
-// Determine where to save the database file
-// In production, save it to the user's local AppData folder so it isn't lost during updates
-const isProd = process.env.NODE_ENV === "production";
-const dbFolder = isProd
-  ? path.join(process.env.APPDATA || process.env.HOME, "DukaFlow")
-  : path.join(__dirname, "../");
+// FORCE a unified path for local development so scripts and server sync up!
+const dbPath = path.join(__dirname, "../pos_system.db");
 
-if (!fs.existsSync(dbFolder)) {
-  fs.mkdirSync(dbFolder, { recursive: true });
-}
+console.log(`[SQLite Target] Binding engine instance to: ${dbPath}`);
 
-const dbPath = path.join(dbFolder, "pos_system.db");
-
-// Connect to the SQLite Database file
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error("Error opening SQLite database:", err.message);
@@ -25,34 +15,12 @@ const db = new sqlite3.Database(dbPath, (err) => {
   }
 });
 
-// Create tables automatically if they don't exist
 function initializeTables() {
   db.serialize(() => {
-    // CRITICAL FIX: Enable foreign keys inside SQLite runtime
+    // 💡 Enable foreign keys right away
     db.run("PRAGMA foreign_keys = ON");
 
-    // ==========================================
-    // 1. INDEPENDENT LAYER TABLES (No foreign dependencies)
-    // ==========================================
-    
-    // Products Table
-    db.run(`
-      CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        category TEXT,
-        price REAL NOT NULL,
-        quantity INTEGER NOT NULL,
-        units TEXT,
-        businessId TEXT NOT NULL
-      )
-    `);
-
-    // ==========================================
-    // 2. WORKSPACE AND MANAGEMENT LAYER TABLES
-    // ==========================================
-
-    // Combined & Unified Businesses Table
+    // LAYER 1: BASE INDEPENDENT TABLES
     db.run(`
       CREATE TABLE IF NOT EXISTS businesses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,14 +30,31 @@ function initializeTables() {
         city TEXT,
         status TEXT DEFAULT 'active',
         subscriptionPlan TEXT DEFAULT 'trial',
-        subscriptionEndsAt TEXT,
-        trialEndsAt TEXT,
+        subscriptionEndsAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        trialEndsAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         ownerId INTEGER,
         lastTransactionId TEXT
       )
     `);
 
-    // Core Users & Staff Table (Depends on businesses)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        category TEXT,
+        price REAL NOT NULL,
+        quantity INTEGER NOT NULL,
+        businessId INTEGER NOT NULL 
+      )
+    `);
+
+    // Seed Critical Business Data Immediately
+    db.run(`
+      INSERT OR IGNORE INTO businesses (id, businessName, phone, city, status, subscriptionPlan) 
+      VALUES (1, 'Default Retailer Headquarters', '+254 700 000000', 'Nairobi, Kenya', 'active', 'lifetime')
+    `);
+
+    // LAYER 2: DEPENDENT RELATION TABLES
     db.run(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,11 +67,25 @@ function initializeTables() {
         role TEXT DEFAULT 'cashier',
         themePreference TEXT DEFAULT 'light',
         businessId INTEGER,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP, 
         FOREIGN KEY (businessId) REFERENCES businesses(id) ON DELETE SET NULL
       )
     `);
 
-    // Subscriptions Table (Depends on businesses)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        creditLimit REAL DEFAULT 50000.00,
+        currentDebt REAL DEFAULT 0.00,
+        businessId INTEGER NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (businessId) REFERENCES businesses(id) ON DELETE CASCADE
+      )
+    `);
+
     db.run(`
       CREATE TABLE IF NOT EXISTS subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,70 +93,106 @@ function initializeTables() {
         plan TEXT DEFAULT 'trial',
         status TEXT DEFAULT 'active',
         endDate TEXT,
-        createdAt TEXT NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
         FOREIGN KEY (businessId) REFERENCES businesses(id) ON DELETE CASCADE
       )
     `);
 
-    // ==========================================
-    // 3. OPERATIONAL TRANSACTION LAYER TABLES
-    // ==========================================
-
-    // Stocks Table
     db.run(`
-      CREATE TABLE IF NOT EXISTS stocks (
+      CREATE TABLE IF NOT EXISTS business_analytics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        category TEXT,
-        quantityAdded INTEGER NOT NULL,
-        units TEXT,
-        price REAL NOT NULL,
-        date TEXT NOT NULL,
-        businessId TEXT NOT NULL,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        businessId INTEGER UNIQUE NOT NULL,
+        totalCreditSales REAL DEFAULT 0,
+        currentCreditBalance REAL DEFAULT 0,
+        updatedAt TEXT,
+        FOREIGN KEY (businessId) REFERENCES businesses(id) ON DELETE CASCADE
       )
     `);
 
-    // Sales Table
+    // LAYER 3: INVOICE ENGINE CORE
+    db.run(`
+      CREATE TABLE IF NOT EXISTS invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoiceNumber TEXT UNIQUE NOT NULL,
+        customerId INTEGER, 
+        customerName TEXT NOT NULL DEFAULT 'Walk-in Customer',
+        totalAmount REAL NOT NULL,
+        amountPaid REAL DEFAULT 0.00,
+        balance REAL NOT NULL,
+        status TEXT DEFAULT 'UNPAID',
+        dueDate TEXT DEFAULT 'Immediate Settlement',
+        soldBy INTEGER,
+        businessId INTEGER NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (customerId) REFERENCES customers(id) ON DELETE SET NULL
+      )
+    `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS invoice_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoiceId INTEGER NOT NULL,
+        productId INTEGER NOT NULL,
+        price REAL NOT NULL,
+        quantity INTEGER NOT NULL,
+        FOREIGN KEY (invoiceId) REFERENCES invoices(id) ON DELETE CASCADE,
+        FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS invoice_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoiceId INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        method TEXT NOT NULL,
+        reference TEXT,
+        paymentDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (invoiceId) REFERENCES invoices(id) ON DELETE CASCADE
+      )
+    `);
+
+    // LAYER 4: OPERATIONAL FLAT TRANSACTION LEDGERS
     db.run(`
       CREATE TABLE IF NOT EXISTS sales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoiceId INTEGER, 
         productId INTEGER NOT NULL,
         quantitySold INTEGER NOT NULL,
         unitPrice REAL NOT NULL,
         totalPrice REAL NOT NULL,
-        paymentMethod TEXT NOT NULL,
-        paymentStatus TEXT NOT NULL,
+        paymentMethod TEXT,
+        paymentStatus TEXT,
         balance REAL DEFAULT 0,
-        date TEXT NOT NULL,
-        businessId TEXT NOT NULL,
-        soldBy TEXT NOT NULL,
-        FOREIGN KEY (productId) REFERENCES products(id)
+        date TEXT,
+        businessId INTEGER NOT NULL,
+        soldBy INTEGER,
+        FOREIGN KEY (invoiceId) REFERENCES invoices(id) ON DELETE SET NULL,
+        FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE
       )
     `);
 
-    // Credits Table
     db.run(`
       CREATE TABLE IF NOT EXISTS credits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoiceId INTEGER, 
         productId INTEGER NOT NULL,
         saleId INTEGER NOT NULL,
-        businessId TEXT NOT NULL,
+        businessId INTEGER NOT NULL,
         customerName TEXT NOT NULL,
         customerPhone TEXT,
         totalAmount REAL NOT NULL,
         amountPaid REAL DEFAULT 0,
         balance REAL NOT NULL,
-        status TEXT NOT NULL,
+        status TEXT DEFAULT 'PENDING',
         nextPaymentDate TEXT,
-        createdAt TEXT NOT NULL,
-        FOREIGN KEY (productId) REFERENCES products(id),
-        FOREIGN KEY (saleId) REFERENCES sales(id) ON DELETE CASCADE
+        createdAt TEXT,
+        FOREIGN KEY (invoiceId) REFERENCES invoices(id) ON DELETE SET NULL,
+        FOREIGN KEY (saleId) REFERENCES sales(id) ON DELETE CASCADE,
+        FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE
       )
     `);
 
-    // Credit Payments Table
     db.run(`
       CREATE TABLE IF NOT EXISTS credit_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,7 +204,34 @@ function initializeTables() {
       )
     `);
 
+    db.run(`
+      CREATE TABLE IF NOT EXISTS stocks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        category TEXT,
+        quantityAdded INTEGER NOT NULL,
+        units TEXT,
+        price REAL NOT NULL,
+        date TEXT NOT NULL,
+        businessId INTEGER NOT NULL, 
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `);
+
+    db.run("ALTER TABLE sales ADD COLUMN paymentReference TEXT;", (err) => {});
+    db.run("ALTER TABLE sales ADD COLUMN bankingDetails TEXT;", (err) => {});
+
+    db.run("ALTER TABLE credit_payments ADD COLUMN paymentReference TEXT;", (err) => {});
+    db.run("ALTER TABLE credit_payments ADD COLUMN bankingDetails TEXT;", (err) => {});
+
+    
+
+    // 🛠️ MIGRATIONS: Structural fallbacks for existing historical DB files
+    db.run("ALTER TABLE invoices ADD COLUMN soldBy INTEGER;", (err) => {});
+    db.run("ALTER TABLE credits ADD COLUMN customerId INTEGER;", (err) => {});
   });
 }
 
+// 📦 Make sure this object is exported cleanly so our API file can see it
 module.exports = db;
