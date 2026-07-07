@@ -193,15 +193,15 @@ exports.getIntegrationSettings = (req, res) => {
     // Format data into clean, isolated camelCase configuration objects for the frontend
     res.status(200).json({
       mpesaConfig: {
-        shortCode: row.mpesa_shortcode || "",
-        consumerKey: row.mpesa_consumer_key || "",
-        consumerSecret: row.mpesa_consumer_secret || "",
-        passKey: row.mpesa_passkey || ""
+        mpesa_short_code: row.mpesa_shortcode || "",
+        mpesa_consumer_key: row.mpesa_consumer_key || "",
+        mpesa_consumer_secret: row.mpesa_consumer_secret || "",
+        mpesa_pass_key: row.mpesa_passkey || ""
       },
       etimsConfig: {
-        taxpayerPin: row.etims_taxpayer_pin || "",
-        apiKey: row.etims_api_key || "",
-        branchCode: row.etims_branch_code || ""
+        etims_taxpayer_pin: row.etims_taxpayer_pin || "",
+        etims_api_key: row.etims_api_key || "",
+        etims_branch_code: row.etims_branch_code || ""
       }
     });
   });
@@ -213,14 +213,14 @@ exports.updateIntegrationSettings = (req, res) => {
   const { mpesaConfig, etimsConfig } = req.body;
 
   // Destructure incoming keys safely with default fallbacks to prevent NULL column binding crashes
-  const mpesa_shortcode = mpesaConfig?.shortCode || "";
-  const mpesa_consumer_key = mpesaConfig?.consumerKey || "";
-  const mpesa_consumer_secret = mpesaConfig?.consumerSecret || "";
-  const mpesa_passkey = mpesaConfig?.passKey || "";
+  const mpesa_shortcode = mpesaConfig?.mpesa_short_code || "";
+  const mpesa_consumer_key = mpesaConfig?.mpesa_consumer_key || "";
+  const mpesa_consumer_secret = mpesaConfig?.mpesa_consumer_secret || "";
+  const mpesa_passkey = mpesaConfig?.mpesa_pass_key || "";
 
-  const etims_taxpayer_pin = etimsConfig?.taxpayerPin || "";
-  const etims_api_key = etimsConfig?.apiKey || "";
-  const etims_branch_code = etimsConfig?.branchCode || "";
+  const etims_taxpayer_pin = etimsConfig?.etims_taxpayer_pin || "";
+  const etims_api_key = etimsConfig?.etims_api_key || "";
+  const etims_branch_code = etimsConfig?.etims_branch_code || "";
 
   const updateSql = `
     UPDATE businesses 
@@ -266,10 +266,10 @@ exports.updateIntegrationSettings = (req, res) => {
       res.status(200).json({
         message: "Integration settings updated successfully!",
         mpesaConfig: {
-          mpesa_shortcode: mpesa_shortcode,
+          mpesa_short_code: mpesa_shortcode,
           mpesa_consumer_key: mpesa_consumer_key,
           mpesa_consumer_secret: mpesa_consumer_secret,
-          mpesa_passkey: mpesa_passkey
+          mpesa_pass_key: mpesa_passkey
         },
         etimsConfig: {
           etims_taxpayer_pin: etims_taxpayer_pin,
@@ -290,7 +290,7 @@ exports.getAllBusinessIntegrations = (req, res) => {
 
   const sql = `
     SELECT id, businessName, phone, city, status, subscriptionPlan,
-           (CASE WHEN mpesa_shortcode != '' THEN 'Configured' ELSE 'Missing' END) as mpesaStatus,
+           (CASE WHEN mpesa_short_code != '' THEN 'Configured' ELSE 'Missing' END) as mpesaStatus,
            (CASE WHEN etims_api_key != '' THEN 'Configured' ELSE 'Missing' END) as etimsStatus
     FROM businesses
   `;
@@ -298,5 +298,111 @@ exports.getAllBusinessIntegrations = (req, res) => {
   db.all(sql, [], (err, rows) => {
     if (err) return res.status(500).json({ message: err.message });
     res.status(200).json(rows);
+  });
+};
+
+// 1. GET: Fetch specific integration details for ANY business (For Superadmin view)
+exports.getBusinessIntegrationById = (req, res) => {
+  // Guard clause: Only you (the Superadmin) can access arbitrary business profiles
+  if (req.user.role !== "superadmin") {
+    return res.status(403).json({ message: "Access denied. System administration only." });
+  }
+
+  const { id } = req.params; // Get the business ID directly from the URL route parameter
+
+  const sql = `
+    SELECT 
+      mpesa_short_code, mpesa_consumer_key, mpesa_consumer_secret, mpesa_pass_key,
+      etims_taxpayer_pin, etims_api_key, etims_branch_code
+    FROM businesses 
+    WHERE id = ?
+  `;
+
+  db.get(sql, [id], (err, row) => {
+    if (err) return res.status(500).json({ message: err.message });
+    if (!row) return res.status(404).json({ message: "Target business workspace instance not found." });
+
+    // Restructure the response exactly like your standard 'getIntegrationSettings' 
+    // so you can reuse the exact same input form components on your frontend dashboard!
+    res.status(200).json({
+      mpesaConfig: {
+        mpesa_short_code: row.mpesa_short_code || "",
+        mpesa_consumer_key: row.mpesa_consumer_key || "",
+        mpesa_consumer_secret: row.mpesa_consumer_secret || "",
+        mpesa_pass_key: row.mpesa_pass_key || ""
+      },
+      etimsConfig: {
+        etims_taxpayer_pin: row.etims_taxpayer_pin || "",
+        etims_api_key: row.etims_api_key || "",
+        etims_branch_code: row.etims_branch_code || ""
+      }
+    });
+  });
+};
+
+// 2. PUT: Save configuration overrides on behalf of a specific shop owner
+exports.superadminUpdateBusinessIntegration = (req, res) => {
+  // Guard clause: Ensure non-admin users cannot spoof or manipulate other accounts
+  if (req.user.role !== "superadmin") {
+    return res.status(403).json({ message: "Access denied. System administration only." });
+  }
+
+  // Accept the targetBusinessId directly from the payload instead of relying on req.user
+  const { targetBusinessId, mpesaConfig, etimsConfig } = req.body;
+
+  if (!targetBusinessId) {
+    return res.status(400).json({ message: "Missing targetBusinessId parameter." });
+  }
+
+  const mpesa_short_code = mpesaConfig?.mpesa_short_code || "";
+  const mpesa_consumer_key = mpesaConfig?.mpesa_consumer_key || "";
+  const mpesa_consumer_secret = mpesaConfig?.mpesa_consumer_secret || "";
+  const mpesa_pass_key = mpesaConfig?.mpesa_pass_key || "";
+
+  const etims_taxpayer_pin = etimsConfig?.etims_taxpayer_pin || "";
+  const etims_api_key = etimsConfig?.etims_api_key || "";
+  const etims_branch_code = etimsConfig?.etims_branch_code || "";
+
+  const updateSql = `
+    UPDATE businesses 
+    SET 
+      mpesa_short_code = ?, 
+      mpesa_consumer_key = ?, 
+      mpesa_consumer_secret = ?, 
+      mpesa_pass_key = ?,
+      etims_taxpayer_pin = ?, 
+      etims_api_key = ?, 
+      etims_branch_code = ?
+    WHERE id = ?
+  `;
+
+  const queryParams = [
+    mpesa_short_code,
+    mpesa_consumer_key,
+    mpesa_consumer_secret,
+    mpesa_pass_key,
+    etims_taxpayer_pin,
+    etims_api_key,
+    etims_branch_code,
+    targetBusinessId // 💡 Updates the selected customer's business row, not your own!
+  ];
+
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+
+    db.run(updateSql, queryParams, function (err) {
+      if (err) {
+        db.run("ROLLBACK");
+        return res.status(500).json({ message: "Failed to save administrative updates: " + err.message });
+      }
+
+      if (this.changes === 0) {
+        db.run("ROLLBACK");
+        return res.status(404).json({ message: "Target business workspace instance not found." });
+      }
+
+      db.run("COMMIT");
+      res.status(200).json({ message: "Business integrations configured successfully by Superadmin!" });
+    });
   });
 };

@@ -2,12 +2,21 @@ const db = require("../config/db");
 
 // 1. Get all subscriptions with deep population (Admin Audit Logs)
 const getAllSubscriptions = (req, res) => {
-  // Simulates MongoDB nested population using multi-table JOIN architecture
+  // Select timeline endings clearly to prevent mapping voids on the UI layout
   const sql = `
     SELECT 
-      s.id as subscriptionId, s.plan, s.status, s.endDate, s.createdAt,
-      b.id as bId, b.businessName,
-      u.id as uId, u.phone, u.email, u.city
+      s.id as subscriptionId, 
+      s.plan, 
+      s.status, 
+      s.endDate as expiryDate,            -- Explicitly map to match React expectations
+      s.createdAt,
+      b.id as bId, 
+      b.businessName,
+      b.trialEndsAt as trialEndDate,      -- Pull trail timelines from business workspace context
+      u.id as uId, 
+      u.phone, 
+      u.email, 
+      u.city
     FROM subscriptions s
     LEFT JOIN businesses b ON s.businessId = b.id
     LEFT JOIN users u ON b.ownerId = u.id
@@ -16,25 +25,29 @@ const getAllSubscriptions = (req, res) => {
 
   db.all(sql, [], (err, rows) => {
     if (err) {
-      return res.status(500).json({ message: "Error fetching data", error: err.message });
+      return res
+        .status(500)
+        .json({ message: "Error fetching data", error: err.message });
     }
 
-    // Remap tabular keys into nested objects so your React components don't crash
-    const formattedSubscriptions = rows.map(row => ({
+    // Remap tabular keys into nested objects cleanly
+    const formattedSubscriptions = rows.map((row) => ({
       _id: row.subscriptionId,
       plan: row.plan,
       status: row.status,
-      endDate: row.endDate,
+      expiryDate: row.expiryDate, // Hydrated values mapping cleanly
+      trialEndDate: row.trialEndDate, // Safely exposed database strings
       createdAt: row.createdAt,
       businessId: {
         _id: row.bId,
         businessName: row.businessName,
+        subscriptionPlan: row.plan, // Keeps state synced up with the action modifier button
         ownerId: {
           phone: row.phone,
           email: row.email,
-          city: row.city
-        }
-      }
+          city: row.city,
+        },
+      },
     }));
 
     res.status(200).json(formattedSubscriptions);
@@ -58,7 +71,9 @@ const activateLifetime = (req, res) => {
 
       if (business.subscriptionPlan === "lifetime") {
         db.run("ROLLBACK");
-        return res.status(400).json({ message: "Business already has lifetime access" });
+        return res
+          .status(400)
+          .json({ message: "Business already has lifetime access" });
       }
 
       // Update local workspace restrictions
@@ -113,7 +128,10 @@ const hasAccess = (business) => {
   }
 
   // Paid plans (Monthly/Yearly local activation periods)
-  if (["monthly", "yearly"].includes(business.subscriptionPlan) && business.subscriptionEndsAt) {
+  if (
+    ["monthly", "yearly"].includes(business.subscriptionPlan) &&
+    business.subscriptionEndsAt
+  ) {
     return new Date(business.subscriptionEndsAt) > now;
   }
 

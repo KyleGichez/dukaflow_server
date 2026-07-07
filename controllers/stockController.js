@@ -2,10 +2,11 @@ const db = require("../config/db");
 
 // 1. Create Stock & Sync/Upsert to Product Table
 exports.createStock = (req, res) => {
-  const { category, name, quantityAdded, units, price } = req.body;
+  const { category, name, quantityAdded, units, price, buyingPrice } = req.body;
   const businessId = req.user.businessId; // From Auth Middleware
   const trimmedName = name.trim();
   const addedQty = Number(quantityAdded);
+  const costPrice = Number(buyingPrice);
   const currentPrice = Number(price);
   const currentDate = new Date().toISOString();
 
@@ -24,10 +25,10 @@ exports.createStock = (req, res) => {
         // Product exists: Update its metrics and increment its balance quantity
         const updateProductSql = `
           UPDATE products 
-          SET quantity = quantity + ?, category = ?, units = ?, price = ?
+          SET quantity = quantity + ?, category = ?, units = ?, buying_price = ?, price = ?
           WHERE id = ? AND businessId = ?
         `;
-        db.run(updateProductSql, [addedQty, category, units, currentPrice, product.id, businessId], function (updateErr) {
+        db.run(updateProductSql, [addedQty, category, units, costPrice, currentPrice, product.id, businessId], function (updateErr) {
           if (updateErr) {
             db.run("ROLLBACK");
             return res.status(400).json({ message: updateErr.message });
@@ -37,10 +38,10 @@ exports.createStock = (req, res) => {
       } else {
         // Product does not exist: Simulate an $setOnInsert / Upsert behavior by creating it
         const createProductSql = `
-          INSERT INTO products (name, category, price, quantity, units, businessId)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO products (name, category, buying_price, price, quantity, units, businessId)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `;
-        db.run(createProductSql, [trimmedName, category, currentPrice, addedQty, units, businessId], function (insertErr) {
+        db.run(createProductSql, [trimmedName, category, costPrice, currentPrice, addedQty, units, businessId], function (insertErr) {
           if (insertErr) {
             db.run("ROLLBACK");
             return res.status(400).json({ message: insertErr.message });
@@ -52,10 +53,10 @@ exports.createStock = (req, res) => {
       // Inner helper to append the tracking entry row to your stocks logging table
       function insertStockEntry(productId) {
         const insertStockSql = `
-          INSERT INTO stocks (product_id, name, category, quantityAdded, units, price, date, businessId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO stocks (product_id, name, category, quantityAdded, units, buying_price, price, date, businessId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const stockParams = [productId, trimmedName, category, addedQty, units, currentPrice, currentDate, businessId];
+        const stockParams = [productId, trimmedName, category, addedQty, units, costPrice, currentPrice, currentDate, businessId];
 
         db.run(insertStockSql, stockParams, function (stockErr) {
           if (stockErr) {
@@ -66,12 +67,14 @@ exports.createStock = (req, res) => {
           db.run("COMMIT");
           res.status(201).json({
             id: this.lastID,
+            _id: this.lastID,
             product_id: productId,
             name: trimmedName,
             category,
             quantityAdded: addedQty,
             units,
             price: currentPrice,
+            buyingPrice: costPrice, // Consistent camelCase response
             date: currentDate,
             businessId
           });
@@ -84,7 +87,14 @@ exports.createStock = (req, res) => {
 // 2. Get All Stock Log Entries for the workspace
 exports.getStockItems = (req, res) => {
   const businessId = req.user.businessId;
-  const sql = "SELECT * FROM stocks WHERE businessId = ?";
+  
+  // 🌟 FIXED: Explicitly select buying_price AS buyingPrice so the stock ledger loads values correctly
+  const sql = `
+    SELECT id, product_id, name, category, quantityAdded, units, price, date, businessId,
+           buying_price AS buyingPrice 
+    FROM stocks 
+    WHERE businessId = ?
+  `;
 
   db.all(sql, [businessId], (err, rows) => {
     if (err) {
@@ -102,6 +112,7 @@ exports.updateStock = (req, res) => {
   const stockId = req.params.id;
   const { category, units } = req.body;
   const newQuantity = Number(req.body.quantityAdded);
+  const newCostPrice = Number(req.body.buyingPrice);
   const newPrice = Number(req.body.price);
 
   db.serialize(() => {
@@ -121,10 +132,14 @@ exports.updateStock = (req, res) => {
       // Update baseline historical record metadata row
       const updateStockSql = `
         UPDATE stocks 
-        SET category = ?, quantityAdded = ?, units = ?, price = ?
+        SET category = ?, quantityAdded = ?, units = ?, buying_price = ?, price = ?
         WHERE id = ? AND businessId = ?
       `;
-      db.run(updateStockSql, [category, newQuantity, units, newPrice, stockId, businessId], function (stockErr) {
+      
+      // 🌟 FIXED: Restructured parameters order to map correctly to the SQL SET assignment sequence
+      const stockParams = [category, newQuantity, units, newCostPrice, newPrice, stockId, businessId];
+
+      db.run(updateStockSql, stockParams, function (stockErr) {
         if (stockErr) {
           db.run("ROLLBACK");
           return res.status(400).json({ message: stockErr.message });
@@ -133,10 +148,10 @@ exports.updateStock = (req, res) => {
         // Apply corresponding delta recalculations directly onto product levels
         const updateProductSql = `
           UPDATE products 
-          SET quantity = quantity + ?, price = ?, category = ?, units = ?
+          SET quantity = quantity + ?, buying_price = ?, price = ?, category = ?, units = ?
           WHERE id = ? AND businessId = ?
         `;
-        db.run(updateProductSql, [quantityDifference, newPrice, category, units, oldStock.product_id, businessId], function (productErr) {
+        db.run(updateProductSql, [quantityDifference, newCostPrice, newPrice, category, units, oldStock.product_id, businessId], function (productErr) {
           if (productErr) {
             db.run("ROLLBACK");
             return res.status(400).json({ message: productErr.message });
@@ -145,12 +160,14 @@ exports.updateStock = (req, res) => {
           db.run("COMMIT");
           res.json({
             id: stockId,
+            _id: stockId,
             product_id: oldStock.product_id,
             name: oldStock.name,
             category,
             quantityAdded: newQuantity,
             units,
             price: newPrice,
+            buyingPrice: newCostPrice, // Consistent camelCase response
             businessId
           });
         });

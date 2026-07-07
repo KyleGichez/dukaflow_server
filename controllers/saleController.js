@@ -1,6 +1,5 @@
 const db = require("../config/db");
 
-// Helper function to calculate date filters for SQLite queries
 function getDateFilterConstraint(range) {
   switch (range) {
     case "today":
@@ -11,11 +10,11 @@ function getDateFilterConstraint(range) {
       return "date(date) >= date('now', '-1 month')";
     case "all-time":
     default:
-      return "1=1"; // Always true fallback
+      return "1=1";
   }
 }
 
-// 1. Create Sale (Handles multi-item customer baskets, updates stock, manages credits)
+// 1. Create Sale (Captures snapshot buying price for accurate profit margins)
 exports.createSale = (req, res) => {
   const {
     items,
@@ -36,7 +35,6 @@ exports.createSale = (req, res) => {
   const saleDate = date || new Date().toISOString();
   const processedSalesIds = [];
 
-  // Wrap the entire item loop in an atomic SQLite transaction
   db.serialize(() => {
     db.run("BEGIN TRANSACTION");
 
@@ -44,7 +42,6 @@ exports.createSale = (req, res) => {
 
     function processNextItem() {
       if (itemIndex >= items.length) {
-        // All items processed successfully! Commit the entire transaction block.
         db.run("COMMIT", (commitErr) => {
           if (commitErr) {
             db.run("ROLLBACK");
@@ -58,8 +55,8 @@ exports.createSale = (req, res) => {
       const item = items[itemIndex];
       const { productId, quantitySold } = item;
 
-      // 1 & 2. Find product and verify offline stock constraints
-      const checkProductSql = "SELECT name, price, quantity FROM products WHERE id = ? AND businessId = ?";
+      // 1. Get current item snapshots including its active buying_price cost layer
+      const checkProductSql = "SELECT name, price, buying_price, quantity FROM products WHERE id = ? AND businessId = ?";
       db.get(checkProductSql, [productId, businessId], (err, product) => {
         if (err || !product) {
           db.run("ROLLBACK");
@@ -73,8 +70,8 @@ exports.createSale = (req, res) => {
           });
         }
 
-        // 3. Financial calculations
         const totalPrice = product.price * Number(quantitySold);
+        const currentBuyingPrice = product.buying_price || 0; // Fallback safeguarding 
         let assignedStatus = "Paid";
         let initialBalance = 0;
 
@@ -84,12 +81,24 @@ exports.createSale = (req, res) => {
           assignedStatus = initialBalance <= 0 ? "Paid" : parsedPaid > 0 ? "Partial" : "Pending";
         }
 
-        // 4. Record individual line sale row
+        // 2. Log historical ledger entry along with cached core costing metrics
         const insertSaleSql = `
-          INSERT INTO sales (productId, quantitySold, unitPrice, totalPrice, paymentMethod, paymentStatus, balance, date, businessId, soldBy)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO sales (productId, quantitySold, buyingPrice, unitPrice, totalPrice, paymentMethod, paymentStatus, balance, date, businessId, soldBy)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const saleParams = [productId, Number(quantitySold), product.price, totalPrice, paymentMethod, assignedStatus, initialBalance, saleDate, businessId, userId];
+        const saleParams = [
+          productId, 
+          Number(quantitySold), 
+          currentBuyingPrice, // Save exact snapshot cost configuration
+          product.price, 
+          totalPrice, 
+          paymentMethod, 
+          assignedStatus, 
+          initialBalance, 
+          saleDate, 
+          businessId, 
+          userId
+        ];
 
         db.run(insertSaleSql, saleParams, function (saleErr) {
           if (saleErr) {
@@ -100,7 +109,6 @@ exports.createSale = (req, res) => {
           const newSaleId = this.lastID;
           processedSalesIds.push(newSaleId);
 
-          // 5. Manage Credit Ledger entry if necessary
           if (paymentMethod === "Credit") {
             const insertCreditSql = `
               INSERT INTO credits (productId, saleId, businessId, customerName, customerPhone, totalAmount, amountPaid, balance, status, nextPaymentDate, createdAt)
@@ -120,7 +128,6 @@ exports.createSale = (req, res) => {
             updateStockAndContinue();
           }
 
-          // 6. Deduct inventory item calculations
           function updateStockAndContinue() {
             const updateStockSql = "UPDATE products SET quantity = quantity - ? WHERE id = ? AND businessId = ?";
             db.run(updateStockSql, [Number(quantitySold), productId, businessId], (stockErr) => {
@@ -129,18 +136,17 @@ exports.createSale = (req, res) => {
                 return res.status(400).json({ message: stockErr.message });
               }
               itemIndex++;
-              processNextItem(); // Loop to next basket item
+              processNextItem();
             });
           }
         });
       });
     }
 
-    // Emulates mongoose `.populate()` inside SQLite before returning response payload
     function fetchAndReturnSales() {
       const placeholders = processedSalesIds.map(() => "?").join(",");
       const fetchSql = `
-        SELECT s.*, p.name as productName, p.price as productPrice, u.fname as userFname, u.role as userRole
+        SELECT s.*, p.name as productName, p.price as productPrice, p.buying_price as productBuyingPrice, u.fname as userFname, u.role as userRole
         FROM sales s
         LEFT JOIN products p ON s.productId = p.id
         LEFT JOIN users u ON s.soldBy = u.id
@@ -153,11 +159,10 @@ exports.createSale = (req, res) => {
           return res.status(400).json({ message: fetchErr.message });
         }
 
-        // Format SQL flatten keys to match your frontend model templates
         const formattedSales = rows.map(row => ({
           ...row,
           _id: row.id,
-          productId: { _id: row.productId, name: row.productName, price: row.productPrice },
+          productId: { _id: row.productId, name: row.productName, price: row.productPrice, buyingPrice: row.buyingPrice || row.productBuyingPrice },
           soldBy: { fname: row.userFname, role: row.userRole }
         }));
 
@@ -165,11 +170,11 @@ exports.createSale = (req, res) => {
       });
     }
 
-    processNextItem(); // Initialize transaction processor sequence
+    processNextItem();
   });
 };
 
-// 2. Get Sales History (Filtered by custom dates or presets)
+// 2. Get Sales History
 exports.getSales = (req, res) => {
   const businessId = req.user.businessId;
   const { range, startDate, endDate, paymentMethod } = req.query;
@@ -190,7 +195,7 @@ exports.getSales = (req, res) => {
   }
 
   const sql = `
-    SELECT s.*, p.name as productName, p.price as productPrice, u.fname as userFname, u.role as userRole
+    SELECT s.*, p.name as productName, p.price as productPrice, p.buying_price as productBuyingPrice, u.fname as userFname, u.role as userRole
     FROM sales s
     LEFT JOIN products p ON s.productId = p.id
     LEFT JOIN users u ON s.soldBy = u.id
@@ -206,7 +211,7 @@ exports.getSales = (req, res) => {
     const formattedSales = rows.map(row => ({
       ...row,
       _id: row.id,
-      productId: { _id: row.productId, name: row.productName, price: row.productPrice },
+      productId: { _id: row.productId, name: row.productName, price: row.productPrice, buyingPrice: row.buyingPrice || row.productBuyingPrice },
       soldBy: { fname: row.userFname, role: row.userRole }
     }));
 
@@ -214,7 +219,7 @@ exports.getSales = (req, res) => {
   });
 };
 
-// 3. Delete Sale and restore item inventory metrics
+// 3. Delete Sale
 exports.deleteSale = (req, res) => {
   const businessId = req.user.businessId;
   const saleId = req.params.id;
@@ -251,7 +256,7 @@ exports.deleteSale = (req, res) => {
   });
 };
 
-// 4. Get Dashboard Analytical Insights Summary without Mongo aggregation framework
+// 4. Get Dashboard Analytical Summary (Computes true profit vectors)
 exports.getSalesSummary = (req, res) => {
   const businessId = req.user.businessId;
   const { range, startDate, endDate, paymentMethod } = req.query;
@@ -271,11 +276,12 @@ exports.getSalesSummary = (req, res) => {
     salesFilterParams.push(paymentMethod);
   }
 
-  // SQLite multi-step execution pattern to calculate aggregate records sequentially
+  // Modified to cleanly pull total volume revenue along with net manufacturing/wholesale acquisition cost
   const salesQuery = `
     SELECT 
       SUM(totalPrice) as totalRevenue,
       SUM(quantitySold) as totalItemsSold,
+      SUM(quantitySold * COALESCE(buyingPrice, 0)) as totalCostOfGoods,
       COUNT(id) as totalTransactions
     FROM sales
     WHERE ${salesFilterConditions.join(" AND ")}
@@ -299,30 +305,35 @@ exports.getSalesSummary = (req, res) => {
         if (row.paymentMethod) paymentBreakdown[row.paymentMethod] = row.amount;
       });
 
-      // Calculate trailing 7 days and outstanding credit balance ledgers 
+      // Calculate stock val, credits, and historical 7-day profit boundaries
       const summaryMetricsQuery = `
         SELECT 
           (SELECT COALESCE(SUM(totalPrice), 0) FROM sales WHERE businessId = ? AND date(date) >= date('now', '-7 days')) as revenue7Days,
+          (SELECT COALESCE(SUM(quantitySold * COALESCE(buyingPrice, 0)), 0) FROM sales WHERE businessId = ? AND date(date) >= date('now', '-7 days')) as cost7Days,
           (SELECT COALESCE(SUM(balance), 0) FROM credits WHERE businessId = ?) as outstandingCredits,
-          (SELECT COALESCE(SUM(price * quantity), 0) FROM products WHERE businessId = ?) as totalStockValue
+          (SELECT COALESCE(SUM(buying_price * quantity), 0) FROM products WHERE businessId = ?) as totalStockValue
       `;
 
-      db.get(summaryMetricsQuery, [businessId, businessId, businessId], (summaryErr, metrics) => {
+      db.get(summaryMetricsQuery, [businessId, businessId, businessId, businessId], (summaryErr, metrics) => {
         if (summaryErr) return res.status(500).json({ message: summaryErr.message });
 
         const revenue7Days = metrics.revenue7Days || 0;
-        const outstandingCredits = metrics.outstandingCredits || 0;
-        const profit7Days = revenue7Days - outstandingCredits;
-        const avgDailyProfit = profit7Days / 7;
+        const cost7Days = metrics.cost7Days || 0;
+        const profit7Days = revenue7Days - cost7Days; // DukaFlow real-time calculated profit margins
+        
+        const totalRevenue = mainStats.totalRevenue || 0;
+        const totalCostOfGoods = mainStats.totalCostOfGoods || 0;
+        const calculatedRangeProfit = totalRevenue - totalCostOfGoods; // Profit value specifically for current chosen date ranges
 
         res.json({
-          totalRevenue: mainStats.totalRevenue || 0,
+          totalRevenue,
           totalItemsSold: mainStats.totalItemsSold || 0,
           totalTransactions: mainStats.totalTransactions || 0,
-          totalStockValue: metrics.totalStockValue || 0,
+          totalStockValue: metrics.totalStockValue || 0, 
           profit7Days: profit7Days || 0,
-          avgDailyProfit: Math.round(avgDailyProfit || 0),
-          activeCredits: outstandingCredits || 0,
+          avgDailyProfit: Math.round(profit7Days / 7),
+          rangeProfit: calculatedRangeProfit || 0, // 🆕 Expose specific search range profits to frontend components
+          activeCredits: metrics.outstandingCredits || 0,
           paymentBreakdown,
         });
       });

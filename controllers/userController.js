@@ -309,7 +309,7 @@ exports.getAllBusinesses = (req, res) => {
 exports.getBusinessUsers = (req, res) => {
   const businessId = req.user.businessId;
   const sql =
-    "SELECT id, fname, lname, email, phone, role, city, businessId, createdAt FROM users WHERE businessId = ?";
+    "SELECT id, fname, lname, email, phone, role, city, status, businessId, createdAt FROM users WHERE businessId = ?";
 
   db.all(sql, [businessId], (err, rows) => {
     if (err) return res.status(500).json({ message: err.message });

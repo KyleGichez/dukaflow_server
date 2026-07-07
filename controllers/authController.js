@@ -6,8 +6,22 @@ exports.login = async (req, res) => {
   try {
     const { phone, password } = req.body;
 
+    if (!phone || !password) {
+      return res.status(400).json({ message: "Phone/Email and password are required" });
+    }
+
+    // 💡 FIX 1: Clean and sanitize the input (remove spaces, tabs, etc.)
+    const searchIdentifier = phone.trim();
+
+    // 💡 FIX 2: Check BOTH the phone and email columns for flexibility
+    const query = `
+      SELECT * FROM users 
+      WHERE phone = ? OR email = ? 
+      LIMIT 1
+    `;
+
     // 1. Query the database using the asynchronous sqlite3 driver
-    db.get("SELECT * FROM users WHERE phone = ?", [phone], async (err, user) => {
+    db.get(query, [searchIdentifier, searchIdentifier], async (err, user) => {
       if (err) {
         console.error("❌ Database query error:", err);
         return res.status(500).json({ message: "Internal Server Error", error: err.message });
@@ -15,11 +29,9 @@ exports.login = async (req, res) => {
 
       // 2. Handle missing user records safely
       if (!user) {
+        console.log(`🔍 Authentication failed for identifier: ${searchIdentifier}`);
         return res.status(404).json({ message: "User not found" });
       }
-
-      // console.log("Found user row object keys:", Object.keys(user));
-      // console.log("User row data sample:", user);
 
       // 3. Verify using the correct column name from your schema ('password')
       const storedHash = user.password; 

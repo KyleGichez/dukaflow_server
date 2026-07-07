@@ -2,7 +2,7 @@ const db = require("../config/db"); // Path to your SQLite db configuration file
 
 // 1. Create Product & Initial Stock Entry
 exports.createProduct = (req, res) => {
-  const { name, category, price, quantity, units } = req.body;
+  const { name, category, price, buyingPrice, quantity, units } = req.body;
   const businessId = req.user.businessId; // Extracted from your JWT middleware
   const trimmedName = name.trim();
 
@@ -24,10 +24,10 @@ exports.createProduct = (req, res) => {
     db.run("BEGIN TRANSACTION");
 
     const insertProductSql = `
-      INSERT INTO products (name, category, price, quantity, units, businessId)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO products (name, category, buying_price, price, quantity, units, businessId)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
-    const productParams = [trimmedName, category, price, quantity, units, businessId];
+    const productParams = [trimmedName, category, buyingPrice, price, quantity, units, businessId];
 
     db.run(insertProductSql, productParams, function (err) {
       if (err) {
@@ -39,10 +39,10 @@ exports.createProduct = (req, res) => {
       const currentDate = new Date().toISOString();
 
       const insertStockSql = `
-        INSERT INTO stocks (product_id, name, category, quantityAdded, units, price, date, businessId)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO stocks (product_id, name, category, quantityAdded, units, buying_price, price, date, businessId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
-      const stockParams = [newProductId, trimmedName, category, quantity, units, price, currentDate, businessId];
+      const stockParams = [newProductId, trimmedName, category, quantity, units, buyingPrice, price, currentDate, businessId];
 
       db.run(insertStockSql, stockParams, function (stockErr) {
         if (stockErr) {
@@ -57,6 +57,7 @@ exports.createProduct = (req, res) => {
           id: newProductId,
           name: trimmedName,
           category,
+          buyingPrice: buyingPrice,
           price,
           quantity,
           units,
@@ -70,7 +71,14 @@ exports.createProduct = (req, res) => {
 // 2. Get All Products (Scoped to businessId)
 exports.getProducts = (req, res) => {
   const businessId = req.user.businessId;
-  const sql = "SELECT * FROM products WHERE businessId = ?";
+  
+  // 🌟 FIXED: Aliased buying_price to buyingPrice so the array maps cleanly to the frontend table state
+  const sql = `
+    SELECT id, name, category, price, quantity, units, businessId, 
+           buying_price AS buyingPrice 
+    FROM products 
+    WHERE businessId = ?
+  `;
 
   db.all(sql, [businessId], (err, rows) => {
     if (err) {
@@ -82,7 +90,7 @@ exports.getProducts = (req, res) => {
 
 // 3. Update Product & Append Stock History Log Record
 exports.updateProduct = (req, res) => {
-  const { name, category, price, quantity, units } = req.body;
+  const { name, category, price, buyingPrice, quantity, units } = req.body;
   const businessId = req.user.businessId;
   const productId = req.params.id; 
   const trimmedName = name.trim();
@@ -102,10 +110,10 @@ exports.updateProduct = (req, res) => {
       // Update Product record
       const updateProductSql = `
         UPDATE products 
-        SET name = ?, category = ?, price = ?, quantity = ?, units = ?
+        SET name = ?, category = ?, buying_price = ?, price = ?, quantity = ?, units = ?
         WHERE id = ? AND businessId = ?
       `;
-      const productParams = [trimmedName, category, price, newTotal, units, productId, businessId];
+      const productParams = [trimmedName, category, buyingPrice, price, newTotal, units, productId, businessId];
 
       db.run(updateProductSql, productParams, function (updateErr) {
         if (updateErr) {
@@ -117,10 +125,10 @@ exports.updateProduct = (req, res) => {
         // instead of a conflicting ON CONFLICT upsert.
         const currentDate = new Date().toISOString();
         const insertStockSql = `
-          INSERT INTO stocks (product_id, name, category, quantityAdded, units, price, date, businessId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO stocks (product_id, name, category, quantityAdded, units, price, buying_price, date, businessId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const stockParams = [productId, trimmedName, category, newTotal, units, price, currentDate, businessId];
+        const stockParams = [productId, trimmedName, category, newTotal, units, price, buyingPrice, currentDate, businessId];
 
         db.run(insertStockSql, stockParams, function (stockErr) {
           if (stockErr) {
@@ -135,6 +143,7 @@ exports.updateProduct = (req, res) => {
             id: Number(productId), // Cast to number for local SQLite compliance
             name: trimmedName,
             category,
+            buyingPrice: buyingPrice,
             price,
             quantity: newTotal,
             units,

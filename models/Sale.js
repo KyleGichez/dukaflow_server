@@ -6,6 +6,7 @@ const saleSchema = new mongoose.Schema(
     productId: { type: Number, required: true },
     quantitySold: { type: Number, required: true },
     unitPrice: { type: Number, required: true },
+    buyingPrice: { type: Number, required: true },
     totalPrice: { type: Number, required: true },
     paymentMethod: { type: String, required: true },
     paymentStatus: { type: String, required: true },

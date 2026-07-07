@@ -1,29 +1,28 @@
 const db = require("../config/db");
 
 exports.getSuperAdminDashboard = (req, res) => {
-  // Query 1: Single-pass performance counter using conditional CASE expressions
-  const statsSql = `
+  // 1. Core User Aggregations (Using only known structural columns)
+  const userStatsSql = `
     SELECT
-      -- User Statistics
-      COUNT(u.id) as totalUsers,
-      SUM(CASE WHEN u.role != 'superadmin' THEN 1 ELSE 0 END) as activeUsers, -- Using role filter as an activity/non-admin indicator
-
-      -- Business Workspace Statistics
-      COUNT(b.id) as totalBusinesses,
-      SUM(CASE WHEN b.status = 'active' THEN 1 ELSE 0 END) as activeBusinesses,
-
-      -- Flattened Subscription Metrics
-      SUM(CASE WHEN b.status = 'active' THEN 1 ELSE 0 END) as activeSubs,
-      SUM(CASE WHEN b.subscriptionPlan = 'trial' THEN 1 ELSE 0 END) as trialSubs,
-      SUM(CASE WHEN b.status = 'expired' THEN 1 ELSE 0 END) as expiredSubs,
-      SUM(CASE WHEN b.subscriptionPlan = 'monthly' AND b.status = 'active' THEN 1 ELSE 0 END) as monthlySubs,
-      SUM(CASE WHEN b.subscriptionPlan = 'yearly' AND b.status = 'active' THEN 1 ELSE 0 END) as yearlySubs,
-      SUM(CASE WHEN b.subscriptionPlan = 'lifetime' AND b.status = 'active' THEN 1 ELSE 0 END) as lifetimeSubs
-    FROM users u
-    LEFT JOIN businesses b ON u.businessId = b.id
+      COUNT(id) as totalUsers,
+      SUM(CASE WHEN role != 'superadmin' THEN 1 ELSE 0 END) as activeUsers
+    FROM users
   `;
 
-  // Query 2: Fetch the 5 most recently onboarded user accounts
+  // 2. Real Business Workspace & Subscription Footprint Aggregations 
+  const businessStatsSql = `
+    SELECT
+      COUNT(id) as totalBusinesses,
+      SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as activeBusinesses,
+      SUM(CASE WHEN subscriptionPlan = 'trial' THEN 1 ELSE 0 END) as trialSubs,
+      SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) as expiredSubs,
+      SUM(CASE WHEN subscriptionPlan = 'monthly' AND status = 'active' THEN 1 ELSE 0 END) as monthlySubs,
+      SUM(CASE WHEN subscriptionPlan = 'yearly' AND status = 'active' THEN 1 ELSE 0 END) as yearlySubs,
+      SUM(CASE WHEN subscriptionPlan = 'lifetime' AND status = 'active' THEN 1 ELSE 0 END) as lifetimeSubs
+    FROM businesses
+  `;
+
+  // 3. Fetch the 5 most recently onboarded user accounts
   const recentUsersSql = `
     SELECT id, fname, lname, email, phone, role, city, businessId
     FROM users
@@ -32,48 +31,57 @@ exports.getSuperAdminDashboard = (req, res) => {
     LIMIT 5
   `;
 
-  // Execute queries sequentially inside a thread-safe serialize wrapper
   db.serialize(() => {
-    db.get(statsSql, [], (err, statsRow) => {
+    // Run User Stats
+    db.get(userStatsSql, [], (err, userRow) => {
       if (err) {
-        console.error("Dashboard Stats Error:", err.message);
-        return res.status(500).json({ message: "Error fetching dashboard stats", error: err.message });
+        console.error("Dashboard User Stats Error:", err.message);
+        return res.status(500).json({ message: "Error fetching user stats", error: err.message });
       }
 
-      db.all(recentUsersSql, [], (recentErr, recentRows) => {
-        if (recentErr) {
-          console.error("Dashboard Recent Users Error:", recentErr.message);
-          return res.status(500).json({ message: "Error fetching recent users", error: recentErr.message });
+      // Run Business Stats 
+      db.get(businessStatsSql, [], (bizErr, bizRow) => {
+        if (bizErr) {
+          console.error("Dashboard Business Stats Error:", bizErr.message);
+          return res.status(500).json({ message: "Error fetching business metrics", error: bizErr.message });
         }
 
-        // Standardize output rows to match your frontend data expectations
-        const formattedRecentUsers = recentRows.map(row => ({
-          ...row,
-          _id: row.id // Replicates MongoDB ID property for component compatibility
-        }));
+        // Run Recent Users
+        db.all(recentUsersSql, [], (recentErr, recentRows) => {
+          if (recentErr) {
+            console.error("Dashboard Recent Users Error:", recentErr.message);
+            return res.status(500).json({ message: "Error fetching recent users", error: recentErr.message });
+          }
 
-        // Respond with the clean nested JSON object shape matching your React code
-        res.status(200).json({
-          stats: {
-            users: {
-              total: statsRow.totalUsers || 0,
-              active: statsRow.activeUsers || 0
+          // Format output rows to ensure complete compatibility with your frontend keys
+          const formattedRecentUsers = recentRows.map(row => ({
+            ...row,
+            _id: row.id 
+          }));
+
+          // Send down the exact structural shape your React dashboard code expects
+          res.status(200).json({
+            stats: {
+              users: {
+                total: userRow?.totalUsers || 0,
+                active: userRow?.activeUsers || 0
+              },
+              businesses: {
+                total: bizRow?.totalBusinesses || 0,
+                active: bizRow?.activeBusinesses || 0
+              },
+              subscriptions: {
+                total: bizRow?.totalBusinesses || 0, 
+                active: bizRow?.activeBusinesses || 0,
+                trial: bizRow?.trialSubs || 0,
+                expired: bizRow?.expiredSubs || 0,
+                monthly: bizRow?.monthlySubs || 0,
+                yearly: bizRow?.yearlySubs || 0,
+                lifetime: bizRow?.lifetimeSubs || 0
+              }
             },
-            businesses: {
-              total: statsRow.totalBusinesses || 0,
-              active: statsRow.activeBusinesses || 0
-            },
-            subscriptions: {
-              total: statsRow.totalBusinesses || 0, // In flattened tables, businesses equal subscription footprints
-              active: statsRow.activeSubs || 0,
-              trial: statsRow.trialSubs || 0,
-              expired: statsRow.expiredSubs || 0,
-              monthly: statsRow.monthlySubs || 0,
-              yearly: statsRow.yearlySubs || 0,
-              lifetime: statsRow.lifetimeSubs || 0
-            }
-          },
-          recentUsers: formattedRecentUsers
+            recentUsers: formattedRecentUsers
+          });
         });
       });
     });

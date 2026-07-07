@@ -19,7 +19,7 @@ const userSchema = new mongoose.Schema(
         return this.role !== "superadmin";
       }
     },
-    isActive: { type: Boolean, default: true }
+    status: { type: String, default: "active" },
   },
   { timestamps: true }
 );
