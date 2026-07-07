@@ -221,7 +221,7 @@ app.get("/api/analytics/revenue-summary", authMiddleWare, (req, res) => {
     // Fetch live ledger balance from dedicated credits table
     const standaloneCreditsQuery = `
       SELECT COALESCE(SUM(CAST(balance AS REAL)), 0) as totalStandaloneDebt
-    FROM credits
+      FROM credits
       WHERE businessId = ? AND ${creditDateConstraint}
     `;
     const creditsParams = [businessId, ...baseDateParams];
@@ -293,88 +293,102 @@ app.get("/api/analytics/revenue-summary", authMiddleWare, (req, res) => {
           
           const realizedRevenue = Math.max(0, gross - outstandingDebt);
 
-          // 5️⃣ Query 4: 7-Day Trend Progress Map
-          const dailyQuery = `
+          // 🆕 ADDED FEATURE: Dedicated, explicit rolling 7-day true net profit query 
+          // Isolates calculation away from the request's interactive query filters
+          const rolling7DayQuery = `
             SELECT 
-              CASE strftime('%w', ${parsedSalesDate})
-                WHEN '0' THEN 'Sun' WHEN '1' THEN 'Mon' WHEN '2' THEN 'Tue'
-                WHEN '3' THEN 'Wed' WHEN '4' THEN 'Thu' WHEN '5' THEN 'Fri' 
-                WHEN '6' THEN 'Sat'
-              END as dayLabel,
-              SUM(CAST(totalPrice AS REAL)) as dailyRevenue
+              COALESCE(SUM(CAST(totalPrice AS REAL) - (CAST(COALESCE(buyingPrice, 0) AS REAL) * CAST(COALESCE(quantitySold, 1) AS REAL))), 0) as strict7DayProfit
             FROM sales
-            WHERE businessId = ? AND ${parsedSalesDate} >= date('now', '+3 hours', '-6 days') AND ${paymentConstraint}
-            GROUP BY dayLabel
+            WHERE businessId = ? AND ${parsedSalesDate} >= date('now', '+3 hours', '-6 days')
           `;
 
-          const dailyQueryParams = [businessId];
-          if (paymentConstraint.includes('?')) dailyQueryParams.push(paymentMethod.trim().toLowerCase());
+          db.get(rolling7DayQuery, [businessId], (rollingErr, rollingRow) => {
+            const explicit7DayProfit = rollingRow?.strict7DayProfit || 0;
 
-          db.all(dailyQuery, dailyQueryParams, (dailyErr, dailyRows) => {
-            const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            const realRevenueMap = {};
-            daysOfWeek.forEach(day => realRevenueMap[day] = 0);
-
-            if (!dailyErr && dailyRows) {
-              dailyRows.forEach(row => {
-                if (row.dayLabel) realRevenueMap[row.dayLabel] = row.dailyRevenue || 0;
-              });
-            }
-
-            const peakEarningDayValue = Math.max(...Object.values(realRevenueMap), 1);
-            const progressMap = daysOfWeek.map((dayLabel) => {
-              const dayRevenue = realRevenueMap[dayLabel] || 0;
-              return {
-                dayLabel,
-                revenue: dayRevenue,
-                percentage: Math.round((dayRevenue / peakEarningDayValue) * 100)
-              };
-            });
-
-            // 6️⃣ Query 5: Week-over-Week Evaluation
-            const productivityQuery = `
+            // 5️⃣ Query 4: 7-Day Trend Progress Map
+            const dailyQuery = `
               SELECT 
-                SUM(CASE WHEN ${parsedSalesDate} >= date('now', '+3 hours', 'weekday 0', '-7 days') THEN CAST(totalPrice AS REAL) ELSE 0 END) as thisWeekRevenue,
-                SUM(CASE WHEN ${parsedSalesDate} >= date('now', '+3 hours', 'weekday 0', '-14 days') AND ${parsedSalesDate} < date('now', '+3 hours', 'weekday 0', '-7 days') THEN CAST(totalPrice AS REAL) ELSE 0 END) as lastWeekRevenue
+                CASE strftime('%w', ${parsedSalesDate})
+                  WHEN '0' THEN 'Sun' WHEN '1' THEN 'Mon' WHEN '2' THEN 'Tue'
+                  WHEN '3' THEN 'Wed' WHEN '4' THEN 'Thu' WHEN '5' THEN 'Fri' 
+                  WHEN '6' THEN 'Sat'
+                END as dayLabel,
+                SUM(CAST(totalPrice AS REAL)) as dailyRevenue
               FROM sales
-              WHERE businessId = ? AND ${paymentConstraint}
+              WHERE businessId = ? AND ${parsedSalesDate} >= date('now', '+3 hours', '-6 days') AND ${paymentConstraint}
+              GROUP BY dayLabel
             `;
 
-            const prodQueryParams = [businessId];
-            if (paymentConstraint.includes('?')) prodQueryParams.push(paymentMethod.trim().toLowerCase());
+            const dailyQueryParams = [businessId];
+            if (paymentConstraint.includes('?')) dailyQueryParams.push(paymentMethod.trim().toLowerCase());
 
-            db.get(productivityQuery, prodQueryParams, (prodErr, prodRow) => {
-              const actualThisWeek = prodRow?.thisWeekRevenue || 0;
-              const actualLastWeek = prodRow?.lastWeekRevenue || 0;
+            db.all(dailyQuery, dailyQueryParams, (dailyErr, dailyRows) => {
+              const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+              const realRevenueMap = {};
+              daysOfWeek.forEach(day => realRevenueMap[day] = 0);
 
-              res.json({
-                trueGrossRevenue: gross,
-                rangeProfit: cleanProfit,
-                remainingActiveCredit: outstandingDebt, 
-                trueRealizedRevenue: realizedRevenue,   
-                
-                finalCashTotal: directCash + cashRepayments,
-                directCashSales: directCash,
-                cashRepayments: cashRepayments,
-                
-                finalMpesaTotal: directMpesa + mpesaRepayments,
-                directMpesaSales: directMpesa,
-                creditInitialPaymentsCollected: 0, 
-                mpesaRepayments: mpesaRepayments,
-                
-                finalBankTotal: directBank + bankRepayments,
-                directBankSales: directBank,
-                bankRepayments: bankRepayments,
+              if (!dailyErr && dailyRows) {
+                dailyRows.forEach(row => {
+                  if (row.dayLabel) realRevenueMap[row.dayLabel] = row.dailyRevenue || 0;
+                });
+              }
 
-                directCreditSales: directCredit,
-                totalCollections: totalCollections,
-                
-                last7DaysProfits: cleanProfit,      
-                avgDailyProfit: cleanProfit / 7,
-                
-                lastWeekProductivity: actualLastWeek,
-                currentWeekProductivity: actualThisWeek,
-                progressMap: progressMap
+              const peakEarningDayValue = Math.max(...Object.values(realRevenueMap), 1);
+              const progressMap = daysOfWeek.map((dayLabel) => {
+                const dayRevenue = realRevenueMap[dayLabel] || 0;
+                return {
+                  dayLabel,
+                  revenue: dayRevenue,
+                  percentage: Math.round((dayRevenue / peakEarningDayValue) * 100)
+                };
+              });
+
+              // 6️⃣ Query 5: Week-over-Week Evaluation
+              const productivityQuery = `
+                SELECT 
+                  SUM(CASE WHEN ${parsedSalesDate} >= date('now', '+3 hours', 'weekday 0', '-7 days') THEN CAST(totalPrice AS REAL) ELSE 0 END) as thisWeekRevenue,
+                  SUM(CASE WHEN ${parsedSalesDate} >= date('now', '+3 hours', 'weekday 0', '-14 days') AND ${parsedSalesDate} < date('now', '+3 hours', 'weekday 0', '-7 days') THEN CAST(totalPrice AS REAL) ELSE 0 END) as lastWeekRevenue
+                FROM sales
+                WHERE businessId = ? AND ${paymentConstraint}
+              `;
+
+              const prodQueryParams = [businessId];
+              if (paymentConstraint.includes('?')) prodQueryParams.push(paymentMethod.trim().toLowerCase());
+
+              db.get(productivityQuery, prodQueryParams, (prodErr, prodRow) => {
+                const actualThisWeek = prodRow?.thisWeekRevenue || 0;
+                const actualLastWeek = prodRow?.lastWeekRevenue || 0;
+
+                res.json({
+                  trueGrossRevenue: gross,
+                  rangeProfit: cleanProfit,
+                  remainingActiveCredit: outstandingDebt, 
+                  trueRealizedRevenue: realizedRevenue,   
+                  
+                  finalCashTotal: directCash + cashRepayments,
+                  directCashSales: directCash,
+                  cashRepayments: cashRepayments,
+                  
+                  finalMpesaTotal: directMpesa + mpesaRepayments,
+                  directMpesaSales: directMpesa,
+                  creditInitialPaymentsCollected: 0, 
+                  mpesaRepayments: mpesaRepayments,
+                  
+                  finalBankTotal: directBank + bankRepayments,
+                  directBankSales: directBank,
+                  bankRepayments: bankRepayments,
+
+                  directCreditSales: directCredit,
+                  totalCollections: totalCollections,
+                  
+                  // 📊 Assigned precise rolling 7-day variables here:
+                  last7DaysProfits: explicit7DayProfit,      
+                  avgDailyProfit: explicit7DayProfit / 7,
+                  
+                  lastWeekProductivity: actualLastWeek,
+                  currentWeekProductivity: actualThisWeek,
+                  progressMap: progressMap
+                });
               });
             });
           });
