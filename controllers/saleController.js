@@ -1,17 +1,18 @@
 const db = require("../config/db");
 
 function getDateFilterConstraint(range) {
-  switch (range) {
-    case "today":
-      return "date(date) = date('now', 'localtime')";
-    case "this-week":
-      return "date(date) >= date('now', '-7 days')";
-    case "this-month":
-      return "date(date) >= date('now', '-1 month')";
-    case "all-time":
-    default:
-      return "1=1";
+  if (range === 'today') {
+    // Forces SQLite to evaluate 'now' using the system's local time boundary
+    return "date(date) = date('now', 'localtime')"; 
   }
+  if (range === 'this-week') {
+    // Ensures the start of the week calculation balances cleanly on local time
+    return "date(date) >= date('now', 'localtime', 'weekday 0', '-7 days')";
+  }
+  if (range === 'this-month') {
+    return "date(date) >= date('now', 'localtime', 'start of month')";
+  }
+  return "1=1"; // default fallback for 'all-time'
 }
 
 // 1. Create Sale (Captures snapshot buying price for accurate profit margins)
@@ -308,8 +309,8 @@ exports.getSalesSummary = (req, res) => {
       // Calculate stock val, credits, and historical 7-day profit boundaries
       const summaryMetricsQuery = `
         SELECT 
-          (SELECT COALESCE(SUM(totalPrice), 0) FROM sales WHERE businessId = ? AND date(date) >= date('now', '-7 days')) as revenue7Days,
-          (SELECT COALESCE(SUM(quantitySold * COALESCE(buyingPrice, 0)), 0) FROM sales WHERE businessId = ? AND date(date) >= date('now', '-7 days')) as cost7Days,
+          (SELECT COALESCE(SUM(totalPrice), 0) FROM sales WHERE businessId = ? AND date(date) >= date('now','localtime', '-7 days')) as revenue7Days,
+          (SELECT COALESCE(SUM(quantitySold * COALESCE(buyingPrice, 0)), 0) FROM sales WHERE businessId = ? AND date(date) >= date('now', 'localtime', '-7 days')) as cost7Days,
           (SELECT COALESCE(SUM(balance), 0) FROM credits WHERE businessId = ?) as outstandingCredits,
           (SELECT COALESCE(SUM(buying_price * quantity), 0) FROM products WHERE businessId = ?) as totalStockValue
       `;

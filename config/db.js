@@ -76,7 +76,7 @@ function initializeTables() {
         mpesa_passkey TEXT,
         etims_taxpayer_pin TEXT,
         etims_api_key TEXT,
-        etims_branch_code TEXT,
+        etims_branch_code TEXT
       );
 
       CREATE TABLE IF NOT EXISTS products (
@@ -87,7 +87,7 @@ function initializeTables() {
         quantity INTEGER NOT NULL,
         businessId INTEGER NOT NULL, 
         units TEXT,
-        buying_price REAL DEFAULT 0,
+        buying_price REAL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS users (
@@ -178,7 +178,7 @@ function initializeTables() {
         invoiceId INTEGER, 
         productId INTEGER NOT NULL,
         quantitySold INTEGER NOT NULL,
-        buying_price REAL DEFAULT 0,
+        buyingPrice REAL DEFAULT 0,
         unitPrice REAL NOT NULL,
         totalPrice REAL NOT NULL,
         paymentMethod TEXT,
@@ -257,6 +257,11 @@ function initializeTables() {
             INSERT OR IGNORE INTO businesses (id, businessName, phone, city, status, subscriptionPlan) 
             VALUES (1, 'Default Retailer Headquarters', '+254 700 000000', 'Nairobi, Kenya', 'active', 'lifetime')
           `);
+
+          // 🌟 LIVE PATCH: Migrates old installation databases to support your analytics engine
+          db.run("ALTER TABLE sales ADD COLUMN buyingPrice REAL DEFAULT 0;", (err) => {
+            if (!err) console.log("✨ Successfully patched older database with 'buyingPrice' column.");
+          });
 
           // Run column additions safely
           db.run("ALTER TABLE sales ADD COLUMN paymentReference TEXT;", () => {});
