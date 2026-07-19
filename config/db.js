@@ -101,6 +101,12 @@ function initializeTables() {
         role TEXT DEFAULT 'cashier',
         themePreference TEXT DEFAULT 'light',
         businessId INTEGER,
+        businessName TEXT,
+        storeLocation TEXT,
+        poBox TEXT,
+        taxPin TEXT,
+        receiptDescription TEXT,
+        lowStockThreshold INTEGER DEFAULT 5,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP, 
         FOREIGN KEY (businessId) REFERENCES businesses(id) ON DELETE SET NULL
       );

@@ -129,7 +129,7 @@ app.use("/api/admin/business/integrations", require("./routes/businessRoutes"));
 app.use("/api/admin/businesses", require("./routes/usersRoutes"));
 app.use("/api/admin/users", require("./routes/usersRoutes"));
 app.use("/api/admin/subscription", require("./routes/subscriptionRoutes"));
-app.use("/api/admin/lifetimeaccess", require("./routes/subscriptionRoutes"));
+app.use("/api/admin/activate-subscription", require("./routes/subscriptionRoutes"));
 app.use("/api/myprofile", require("./routes/businessRoutes"));
 app.use("/api/settings", require("./routes/usersRoutes"));
 app.use("/api/invoices", require("./routes/invoiceRoutes"));

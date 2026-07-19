@@ -1,18 +1,17 @@
 const db = require("../config/db");
 
-// 1. Get all subscriptions with deep population (Admin Audit Logs)
+// 1. Get all subscriptions with deep population
 const getAllSubscriptions = (req, res) => {
-  // Select timeline endings clearly to prevent mapping voids on the UI layout
   const sql = `
     SELECT 
       s.id as subscriptionId, 
       s.plan, 
       s.status, 
-      s.endDate as expiryDate,            -- Explicitly map to match React expectations
+      s.endDate as expiryDate,
       s.createdAt,
       b.id as bId, 
       b.businessName,
-      b.trialEndsAt as trialEndDate,      -- Pull trail timelines from business workspace context
+      b.trialEndsAt as trialEndDate,
       u.id as uId, 
       u.phone, 
       u.email, 
@@ -30,18 +29,17 @@ const getAllSubscriptions = (req, res) => {
         .json({ message: "Error fetching data", error: err.message });
     }
 
-    // Remap tabular keys into nested objects cleanly
     const formattedSubscriptions = rows.map((row) => ({
       _id: row.subscriptionId,
       plan: row.plan,
       status: row.status,
-      expiryDate: row.expiryDate, // Hydrated values mapping cleanly
-      trialEndDate: row.trialEndDate, // Safely exposed database strings
+      expiryDate: row.expiryDate,
+      trialEndDate: row.trialEndDate,
       createdAt: row.createdAt,
       businessId: {
         _id: row.bId,
         businessName: row.businessName,
-        subscriptionPlan: row.plan, // Keeps state synced up with the action modifier button
+        subscriptionPlan: row.plan,
         ownerId: {
           phone: row.phone,
           email: row.email,
@@ -54,47 +52,56 @@ const getAllSubscriptions = (req, res) => {
   });
 };
 
-// 2. Activate Permanent Lifetime Access Offline
-const activateLifetime = (req, res) => {
+// 2. Activate Subscriptions Dynamically (Monthly, Yearly, Lifetime)
+const activateSubscription = (req, res) => {
   const businessId = req.params.id;
+  const { plan } = req.body; // Expecting 'monthly', 'yearly', or 'lifetime'
+
+  if (!["monthly", "yearly", "lifetime"].includes(plan)) {
+    return res.status(400).json({ message: "Invalid subscription plan type requested." });
+  }
+
+  // Calculate timelines based on targeted tier
+  let endDate = null;
+  const targetDate = new Date();
+
+  if (plan === "monthly") {
+    targetDate.setDate(targetDate.getDate() + 30);
+    endDate = targetDate.toISOString();
+  } else if (plan === "yearly") {
+    targetDate.setDate(targetDate.getDate() + 365);
+    endDate = targetDate.toISOString();
+  }
 
   db.serialize(() => {
     db.run("BEGIN TRANSACTION");
 
-    // Check if the business entity exists locally
-    const checkSql = "SELECT subscriptionPlan FROM businesses WHERE id = ?";
+    const checkSql = "SELECT id FROM businesses WHERE id = ?";
     db.get(checkSql, [businessId], (err, business) => {
       if (err || !business) {
         db.run("ROLLBACK");
-        return res.status(404).json({ message: "Business not found" });
+        return res.status(404).json({ message: "Business entity tracking context not found" });
       }
 
-      if (business.subscriptionPlan === "lifetime") {
-        db.run("ROLLBACK");
-        return res
-          .status(400)
-          .json({ message: "Business already has lifetime access" });
-      }
-
-      // Update local workspace restrictions
+      // 1. Update Workspace Business Rules Context
       const updateBusinessSql = `
         UPDATE businesses 
-        SET subscriptionPlan = 'lifetime', subscriptionEndsAt = NULL 
+        SET subscriptionPlan = ?, subscriptionEndsAt = ? 
         WHERE id = ?
       `;
-      db.run(updateBusinessSql, [businessId], function (businessErr) {
+      db.run(updateBusinessSql, [plan, endDate, businessId], function (businessErr) {
         if (businessErr) {
           db.run("ROLLBACK");
           return res.status(500).json({ message: businessErr.message });
         }
 
-        // Update licensing history trail row
+        // 2. Sync active billing history ledger item mapping
         const updateSubSql = `
           UPDATE subscriptions 
-          SET plan = 'lifetime', status = 'active', endDate = NULL 
+          SET plan = ?, status = 'active', endDate = ? 
           WHERE businessId = ?
         `;
-        db.run(updateSubSql, [businessId], function (subErr) {
+        db.run(updateSubSql, [plan, endDate, businessId], function (subErr) {
           if (subErr) {
             db.run("ROLLBACK");
             return res.status(500).json({ message: subErr.message });
@@ -103,7 +110,7 @@ const activateLifetime = (req, res) => {
           db.run("COMMIT");
           return res.status(200).json({
             success: true,
-            message: "Lifetime ownership activated successfully",
+            message: `${plan.charAt(0).toUpperCase() + plan.slice(1)} access provisioned successfully!`,
           });
         });
       });
@@ -111,23 +118,20 @@ const activateLifetime = (req, res) => {
   });
 };
 
-// 3. Sync and evaluate access control checks (Local runtime validator)
+// 3. Access control runtime validator
 const hasAccess = (business) => {
   if (!business) return false;
 
-  // Lifetime (always allowed)
   if (business.subscriptionPlan === "lifetime") {
     return true;
   }
 
   const now = new Date();
 
-  // Trial Access Evaluation
   if (business.subscriptionPlan === "trial" && business.trialEndsAt) {
     return new Date(business.trialEndsAt) > now;
   }
 
-  // Paid plans (Monthly/Yearly local activation periods)
   if (
     ["monthly", "yearly"].includes(business.subscriptionPlan) &&
     business.subscriptionEndsAt
@@ -138,4 +142,4 @@ const hasAccess = (business) => {
   return false;
 };
 
-module.exports = { getAllSubscriptions, activateLifetime, hasAccess };
+module.exports = { getAllSubscriptions, activateSubscription, hasAccess };

@@ -179,8 +179,21 @@ exports.deleteStaff = (req, res) => {
 // 5. Update Profile & Security Passwords Settings
 exports.updateSettings = (req, res) => {
   const userId = req.user.id;
-  const { fname, lname, email, currentPassword, newPassword, themePreference } =
-    req.body;
+  const { 
+    fname, 
+    lname, 
+    email, 
+    currentPassword, 
+    newPassword, 
+    themePreference,
+    // New Store Configuration Fields
+    businessName,
+    storeLocation,
+    poBox,
+    taxPin,
+    receiptDescription,
+    lowStockThreshold,
+  } = req.body;
 
   const sql = "SELECT * FROM users WHERE id = ?";
   db.get(sql, [userId], async (err, user) => {
@@ -200,15 +213,32 @@ exports.updateSettings = (req, res) => {
 
       const updateSql = `
         UPDATE users 
-        SET fname = ?, lname = ?, email = ?, password = ?, themePreference = ? 
+        SET fname = ?, 
+            lname = ?, 
+            email = ?, 
+            password = ?, 
+            themePreference = ?,
+            businessName = ?,
+            storeLocation = ?,
+            poBox = ?,
+            taxPin = ?,
+            receiptDescription = ?,
+            lowStockThreshold = ?
         WHERE id = ?
       `;
+      
       const params = [
         fname || user.fname,
         lname || user.lname,
         email || user.email,
         hashedPassword,
         themePreference || user.themePreference,
+        businessName !== undefined ? businessName : user.businessName,
+        storeLocation !== undefined ? storeLocation : user.storeLocation,
+        poBox !== undefined ? poBox : user.poBox,
+        taxPin !== undefined ? taxPin : user.taxPin,
+        receiptDescription !== undefined ? receiptDescription : user.receiptDescription,
+        lowStockThreshold !== undefined ? parseInt(lowStockThreshold, 10) : user.lowStockThreshold,
         userId,
       ];
 
@@ -216,16 +246,35 @@ exports.updateSettings = (req, res) => {
         if (updateErr)
           return res.status(500).json({ message: updateErr.message });
 
-        res.status(200).json({
-          message: "Settings updated successfully",
-          user: {
-            _id: userId,
-            fname: fname || user.fname,
-            lname: lname || user.lname,
-            email: email || user.email,
-            role: user.role,
-            themePreference: themePreference || user.themePreference,
-          },
+        // Fetch freshly updated data to hand back a complete profile object to the client
+        const selectUpdated = "SELECT * FROM users WHERE id = ?";
+        db.get(selectUpdated, [userId], (fetchErr, updatedUser) => {
+          if (fetchErr || !updatedUser) {
+            return res.status(500).json({ message: "Failed formatting final payload metadata structures." });
+          }
+
+          res.status(200).json({
+            message: "Settings updated successfully",
+            user: {
+              id: updatedUser.id,
+              _id: updatedUser.id,
+              fname: updatedUser.fname,
+              lname: updatedUser.lname,
+              email: updatedUser.email,
+              phone: updatedUser.phone,
+              role: updatedUser.role,
+              city: updatedUser.city,
+              businessId: updatedUser.businessId,
+              themePreference: updatedUser.themePreference,
+              // Return new configurations back out to front-end localStorage
+              businessName: updatedUser.businessName,
+              storeLocation: updatedUser.storeLocation,
+              poBox: updatedUser.poBox,
+              taxPin: updatedUser.taxPin,
+              receiptDescription: updatedUser.receiptDescription,
+              lowStockThreshold: updatedUser.lowStockThreshold,
+            },
+          });
         });
       });
     } catch (passwordError) {

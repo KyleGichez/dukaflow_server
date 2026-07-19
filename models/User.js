@@ -19,6 +19,12 @@ const userSchema = new mongoose.Schema(
         return this.role !== "superadmin";
       }
     },
+    businessName: { type: String },
+    storeLocation: { type: String },
+    poBox: { type: String },
+    taxPin: { type: String },
+    receiptDescription: { type: String },
+    lowStockThreshold: { type: Number },
     status: { type: String, default: "active" },
   },
   { timestamps: true }

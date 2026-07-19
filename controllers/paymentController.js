@@ -128,20 +128,42 @@ exports.mpesaCallback = (req, res) => {
       const checkoutID = result.CheckoutRequestID;
 
       // Locate who generated this transaction context
-      db.get("SELECT id, email FROM business WHERE lastTransactionId = ?", [checkoutID], (err, business) => {
+      db.get("SELECT id, email, subscriptionEndsAt FROM business WHERE lastTransactionId = ?", [checkoutID], (err, business) => {
         if (err || !business) return res.json({ ResultCode: 1, ResultDesc: "Business mapping context untraceable" });
 
         const amountItem = result.CallbackMetadata?.Item?.find((i) => i.Name === "Amount");
         const amountPaid = amountItem?.Value || 0;
+        
+        // 🌟 GET THE METADATA REFERENCE PASSED DOWN (e.g. "SUB-12345" or "SALE-12345")
+        // Note: Check your system logs to see if it's stored in business or read directly from a transactions track log.
+        // If your M-pesa API provider drops the original reference in the callback, we check if amountPaid >= 1000
+        const isSaasSubscription = amountPaid >= 1000; 
 
-        // Check if Safaricom includes the structural AccountReference string context
-        // If not found, we check the transaction volume to dynamically route the license update safely
-        if (amountPaid === 2500 || amountPaid === 27000) {
+        if (isSaasSubscription) {
+          // 💳 PROCESS FLEXIBLE SAAS APP SUBSCRIPTION PRO-RATA
           
-          // 💳 PROCESS SAAS APP SUBSCRIPTION FOR YOU
-          const chosenPlan = amountPaid >= 27000 ? "yearly" : "monthly";
-          const daysToAdd = amountPaid >= 27000 ? 365 : 30;
-          const subscriptionEndsAt = new Date(Date.now() + daysToAdd * 24 * 60 * 60 * 1000).toISOString();
+          let daysToAdd = 30; // Default standard metric window
+          let chosenPlan = "monthly";
+
+          if (amountPaid >= 27000) {
+            daysToAdd = 365;
+            chosenPlan = "yearly";
+          } else {
+            // Pro-Rata Engine: Calculate exact day value based on 2,500 base package rate
+            const DAILY_RATE = 2500.00 / 30.0; // Ksh 83.33 per day
+            daysToAdd = Math.floor(amountPaid / DAILY_RATE);
+            chosenPlan = "custom";
+          }
+
+          // Smart Rollover Check: Stack onto active timeline if they pay before current plan completely expires
+          let baseDate = new Date();
+          if (business.subscriptionEndsAt && new Date(business.subscriptionEndsAt) > baseDate) {
+            baseDate = new Date(business.subscriptionEndsAt);
+          }
+          
+          baseDate.setDate(baseDate.getDate() + daysToAdd);
+          baseDate.setHours(23, 59, 59, 999);
+          const subscriptionEndsAt = baseDate.toISOString();
 
           db.serialize(() => {
             db.run("BEGIN TRANSACTION");
@@ -154,13 +176,12 @@ exports.mpesaCallback = (req, res) => {
               [business.id, chosenPlan, subscriptionEndsAt, new Date().toISOString()]
             );
             db.run("COMMIT");
-            console.log(`DukaFlow subscription successfully renewed for client: ${business.email}`);
+            console.log(`DukaFlow subscription renewed dynamically for ${daysToAdd} days for client: ${business.email}`);
           });
 
         } else {
-          // 🛒 PROCESS RETAIL SALE FOR THE SHOP
+          // 🛒 PROCESS RETAIL COUNTER SALE FOR THE TENANT
           console.log(`Retail counter payment cleared of Ksh ${amountPaid} for Shop ID: ${business.id}`);
-          // Add your database statement changes here to mark items as complete/sold!
         }
       });
     }

@@ -7,7 +7,9 @@ exports.login = async (req, res) => {
     const { phone, password } = req.body;
 
     if (!phone || !password) {
-      return res.status(400).json({ message: "Phone/Email and password are required" });
+      return res
+        .status(400)
+        .json({ message: "Phone/Email and password are required" });
     }
 
     // 💡 FIX 1: Clean and sanitize the input (remove spaces, tabs, etc.)
@@ -24,19 +26,27 @@ exports.login = async (req, res) => {
     db.get(query, [searchIdentifier, searchIdentifier], async (err, user) => {
       if (err) {
         console.error("❌ Database query error:", err);
-        return res.status(500).json({ message: "Internal Server Error", error: err.message });
+        return res
+          .status(500)
+          .json({ message: "Internal Server Error", error: err.message });
       }
 
       // 2. Handle missing user records safely
       if (!user) {
-        console.log(`🔍 Authentication failed for identifier: ${searchIdentifier}`);
+        console.log(
+          `🔍 Authentication failed for identifier: ${searchIdentifier}`
+        );
         return res.status(404).json({ message: "User not found" });
       }
 
       // 3. Verify using the correct column name from your schema ('password')
-      const storedHash = user.password; 
+      const storedHash = user.password;
       if (!storedHash) {
-        return res.status(500).json({ message: "Database password column is missing or misconfigured." });
+        return res
+          .status(500)
+          .json({
+            message: "Database password column is missing or misconfigured.",
+          });
       }
 
       const isMatch = await bcrypt.compare(password, storedHash);
@@ -44,7 +54,7 @@ exports.login = async (req, res) => {
         return res.status(400).json({ message: "Invalid credentials" });
       }
 
-      // 4. Generate local stateless JWT access token 
+      // 4. Generate local stateless JWT access token
       const token = jwt.sign(
         {
           id: user.id,
@@ -60,19 +70,26 @@ exports.login = async (req, res) => {
         token,
         user: {
           id: user.id,
-          _id: user.id, 
+          _id: user.id,
           fname: user.fname || "",
           lname: user.lname || "",
           email: user.email || "",
           phone: user.phone,
           role: user.role,
           businessId: user.businessId || null,
+          businessName: user.businessName,
+          storeLocation: user.storeLocation,
+          poBox: user.poBox,
+          taxPin: user.taxPin,
+          receiptDescription: user.receiptDescription,
+          lowStockThreshold: user.lowStockThreshold,
         },
       });
     });
-
   } catch (err) {
     console.error("❌ Login Controller Crash Details:", err);
-    return res.status(500).json({ message: "Internal Server Error", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", error: err.message });
   }
 };
